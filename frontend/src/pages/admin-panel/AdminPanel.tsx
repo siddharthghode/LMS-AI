@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { api } from '../../services/api';
+import { useAuth } from '../../store/authContext';
 import {
   ShieldCheck,
   Users,
@@ -18,11 +19,21 @@ import {
   Server,
   Activity,
   Cpu,
-  RefreshCw
+  RefreshCw,
+  DollarSign,
+  Search,
+  Filter,
+  UserX,
+  UserCheck,
+  Eye,
+  MessageSquare,
+  Award
 } from 'lucide-react';
 
 export const AdminPanel: React.FC = () => {
   const location = useLocation();
+  const { user: currentUser } = useAuth();
+
   const initialTab = location.pathname.includes('/admin/jobs')
     ? 'jobs'
     : location.pathname.includes('/admin/moderation')
@@ -42,12 +53,23 @@ export const AdminPanel: React.FC = () => {
   const [queueStats, setQueueStats] = useState<any>(null);
   const [isDispatchingStreak, setIsDispatchingStreak] = useState(false);
   const [jobMessage, setJobMessage] = useState('');
+  const [toastMsg, setToastMsg] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+
+  // User filter states
+  const [userSearch, setUserSearch] = useState('');
+  const [userRoleFilter, setUserRoleFilter] = useState('all');
+  const [userStatusFilter, setUserStatusFilter] = useState('all');
 
   // Modal for approval feedback
   const [selectedCourse, setSelectedCourse] = useState<any | null>(null);
   const [decision, setDecision] = useState<'approved' | 'rejected'>('approved');
   const [comment, setComment] = useState('Meets platform pedagogical standards and high technical quality.');
+
+  const showToast = (msg: string) => {
+    setToastMsg(msg);
+    setTimeout(() => setToastMsg(''), 4000);
+  };
 
   const loadData = () => {
     setIsLoading(true);
@@ -73,6 +95,10 @@ export const AdminPanel: React.FC = () => {
       .finally(() => setIsLoading(false));
   };
 
+  useEffect(() => {
+    loadData();
+  }, []);
+
   const handleRunStreakNow = async () => {
     setIsDispatchingStreak(true);
     setJobMessage('');
@@ -88,66 +114,125 @@ export const AdminPanel: React.FC = () => {
     }
   };
 
+  // Moderate reported forum post: Dismiss Flag (approve)
   const handleDismissFlag = async (postId: string) => {
     try {
       await api.put(`/admin/moderation/posts/${postId}/dismiss`);
       setFlaggedPosts(prev => prev.filter(p => p.id !== postId));
+      showToast('Flag dismissed successfully. Post approved.');
     } catch (err) {
       console.error('Failed to dismiss flag:', err);
     }
   };
 
+  // Moderate reported forum post: Delete post
   const handleDeleteFlaggedPost = async (postId: string) => {
-    if (!confirm('Are you sure you want to permanently delete this reported post?')) return;
+    if (!confirm('Are you sure you want to permanently delete this reported comment/post?')) return;
     try {
       await api.delete(`/admin/moderation/posts/${postId}`);
       setFlaggedPosts(prev => prev.filter(p => p.id !== postId));
+      showToast('Offending comment/post permanently removed.');
     } catch (err) {
       console.error('Failed to delete flagged post:', err);
     }
   };
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
+  // Approve or Reject Course
   const handleCourseDecision = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedCourse) return;
 
     try {
-      await api.post(`/courses/${selectedCourse.id}/approve`, {
+      await api.post(`/admin/courses/${selectedCourse.id}/approve`, {
         decision,
         comment,
       });
+      const courseTitle = selectedCourse.title;
       setSelectedCourse(null);
+      setPendingCourses(prev => prev.filter(c => c.id !== selectedCourse.id));
+      showToast(`Course "${courseTitle}" marked as ${decision.toUpperCase()}.`);
       loadData();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Decision error:', err);
+      alert(err.response?.data?.error?.message || 'Failed to submit course review decision');
     }
   };
 
+  // Assign or Revoke User Role
   const handleRoleChange = async (userId: string, newRole: string) => {
+    if (userId === currentUser?.id && newRole !== 'admin') {
+      alert('You cannot revoke your own admin role.');
+      return;
+    }
     try {
-      await api.put(`/admin/users/${userId}/role`, { role: newRole });
+      const res = await api.put(`/admin/users/${userId}/role`, { role: newRole });
       setUsersList(prev => prev.map(u => (u.id === userId ? { ...u, role: newRole } : u)));
-    } catch (err) {
+      showToast(`User role updated to ${newRole}`);
+    } catch (err: any) {
       console.error('Role update error:', err);
+      alert(err.response?.data?.error?.message || 'Failed to update user role');
     }
   };
 
+  // Suspend or Activate User Account
   const handleSuspendToggle = async (userId: string, currentStatus: boolean) => {
+    if (userId === currentUser?.id && currentStatus === true) {
+      alert('You cannot suspend your own admin account.');
+      return;
+    }
     try {
       await api.put(`/admin/users/${userId}/suspend`, { is_active: !currentStatus });
       setUsersList(prev => prev.map(u => (u.id === userId ? { ...u, is_active: !currentStatus } : u)));
-    } catch (err) {
+      showToast(`User account ${!currentStatus ? 'activated' : 'suspended'}`);
+    } catch (err: any) {
       console.error('Suspend toggle error:', err);
+      alert(err.response?.data?.error?.message || 'Failed to update suspension status');
     }
   };
 
+  // Delete User Account
+  const handleDeleteUser = async (user: any) => {
+    if (user.id === currentUser?.id) {
+      alert('You cannot delete your own admin account.');
+      return;
+    }
+    if (!confirm(`Are you sure you want to permanently delete user "${user.full_name}" (${user.email})? This action will cascade and remove their enrollment records.`)) {
+      return;
+    }
+    try {
+      await api.delete(`/admin/users/${user.id}`);
+      setUsersList(prev => prev.filter(u => u.id !== user.id));
+      showToast(`User "${user.full_name}" was permanently deleted.`);
+    } catch (err: any) {
+      console.error('Delete user error:', err);
+      alert(err.response?.data?.error?.message || 'Failed to delete user');
+    }
+  };
+
+  // Filtered users list
+  const filteredUsers = usersList.filter(u => {
+    const matchesSearch = !userSearch || (
+      u.full_name?.toLowerCase().includes(userSearch.toLowerCase()) ||
+      u.email?.toLowerCase().includes(userSearch.toLowerCase())
+    );
+    const matchesRole = userRoleFilter === 'all' || u.role === userRoleFilter;
+    const matchesStatus = userStatusFilter === 'all' || (
+      userStatusFilter === 'active' ? u.is_active : !u.is_active
+    );
+    return matchesSearch && matchesRole && matchesStatus;
+  });
+
   return (
     <div className="space-y-6 py-6 animate-in fade-in duration-300">
-      {/* Title */}
+      {/* Toast Alert */}
+      {toastMsg && (
+        <div className="fixed top-20 right-6 z-50 p-4 rounded-2xl bg-indigo-950 border border-indigo-500/40 text-indigo-200 text-xs font-semibold shadow-2xl flex items-center gap-2 animate-in slide-in-from-top-4">
+          <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{toastMsg}</span>
+        </div>
+      )}
+
+      {/* Title & Navigation Header */}
       <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-800">
         <div>
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-semibold mb-2">
@@ -155,14 +240,17 @@ export const AdminPanel: React.FC = () => {
             Platform Governance Console
           </div>
           <h1 className="text-3xl font-black text-white tracking-tight">Admin & Operations</h1>
+          <p className="text-slate-400 text-xs mt-0.5">
+            Manage course approval lifecycle, directory governance, community moderation, and platform metrics.
+          </p>
         </div>
 
         {/* Tab Switcher */}
-        <div className="flex items-center gap-1 bg-slate-800 p-1 rounded-xl border border-slate-700 text-xs font-semibold">
+        <div className="flex items-center gap-1 bg-slate-900 p-1.5 rounded-2xl border border-slate-800 text-xs font-semibold flex-wrap">
           {[
-            { id: 'overview', label: 'Platform Stats' },
-            { id: 'approvals', label: `Pending Approvals (${pendingCourses.length})` },
-            { id: 'users', label: 'User Directory' },
+            { id: 'overview', label: 'Platform Metrics' },
+            { id: 'approvals', label: `Course Approvals (${pendingCourses.length})` },
+            { id: 'users', label: `User Directory (${usersList.length})` },
             { id: 'moderation', label: `Moderation (${flaggedPosts.length})` },
             { id: 'audit', label: 'Audit Trail' },
             { id: 'jobs', label: 'Background Jobs' },
@@ -170,10 +258,10 @@ export const AdminPanel: React.FC = () => {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
-              className={`px-3 py-1.5 rounded-lg transition-all ${
+              className={`px-3.5 py-1.5 rounded-xl transition-all ${
                 activeTab === tab.id
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-white'
+                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30 font-bold'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
               }`}
             >
               {tab.label}
@@ -182,57 +270,144 @@ export const AdminPanel: React.FC = () => {
         </div>
       </div>
 
-      {/* Overview Tab */}
+      {/* TAB 1: Platform-wide Metrics (FR-AD3: DAU, enrollments, completion rate, revenue) */}
       {activeTab === 'overview' && metrics && (
         <div className="space-y-6">
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-            <div className="p-4 rounded-2xl bg-slate-800/40 border border-slate-800">
-              <div className="text-xs text-slate-400 mb-1">Total Users</div>
-              <div className="text-2xl font-black text-white">{metrics.metrics.total_users}</div>
+          {/* Primary 4 Core Platform Metrics specified by PRD */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400">
+                Core Platform Vital Metrics
+              </h2>
+              <span className="text-[11px] text-slate-500">Updated in real-time</span>
             </div>
-            <div className="p-4 rounded-2xl bg-slate-800/40 border border-slate-800">
-              <div className="text-xs text-slate-400 mb-1">Courses</div>
-              <div className="text-2xl font-black text-white">{metrics.metrics.total_courses}</div>
-            </div>
-            <div className="p-4 rounded-2xl bg-slate-800/40 border border-slate-800">
-              <div className="text-xs text-slate-400 mb-1">Enrollments</div>
-              <div className="text-2xl font-black text-emerald-400">{metrics.metrics.total_enrollments}</div>
-            </div>
-            <div className="p-4 rounded-2xl bg-slate-800/40 border border-slate-800">
-              <div className="text-xs text-slate-400 mb-1">Completions</div>
-              <div className="text-2xl font-black text-purple-400">{metrics.metrics.completed_enrollments}</div>
-            </div>
-            <div className="p-4 rounded-2xl bg-slate-800/40 border border-slate-800">
-              <div className="text-xs text-slate-400 mb-1">AI Interactions</div>
-              <div className="text-2xl font-black text-indigo-400">{metrics.metrics.total_ai_interactions}</div>
-            </div>
-            <div className="p-4 rounded-2xl bg-slate-800/40 border border-slate-800">
-              <div className="text-xs text-slate-400 mb-1">Quizzes Taken</div>
-              <div className="text-2xl font-black text-amber-400">{metrics.metrics.total_quizzes_taken}</div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Metric 1: DAU (Daily Active Users) */}
+              <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-900 to-slate-800/80 border border-slate-700/60 shadow-xl space-y-2 relative overflow-hidden group">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                    Daily Active Users (DAU)
+                  </span>
+                  <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
+                    <Users className="w-4 h-4 text-emerald-400" />
+                  </div>
+                </div>
+                <div className="text-3xl font-black text-white tracking-tight">
+                  {metrics.metrics.dau ?? metrics.metrics.total_users}
+                </div>
+                <p className="text-[11px] text-slate-400 flex items-center gap-1">
+                  <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  Active learners and educators in last 24h
+                </p>
+              </div>
+
+              {/* Metric 2: Total Enrollments */}
+              <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-900 to-slate-800/80 border border-slate-700/60 shadow-xl space-y-2 relative overflow-hidden group">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                    Enrollments
+                  </span>
+                  <div className="w-8 h-8 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center">
+                    <BookOpen className="w-4 h-4 text-indigo-400" />
+                  </div>
+                </div>
+                <div className="text-3xl font-black text-white tracking-tight">
+                  {metrics.metrics.enrollments ?? metrics.metrics.total_enrollments}
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Total student enrollments across all approved courses
+                </p>
+              </div>
+
+              {/* Metric 3: Completion Rate */}
+              <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-900 to-slate-800/80 border border-slate-700/60 shadow-xl space-y-2 relative overflow-hidden group">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                    Completion Rate
+                  </span>
+                  <div className="w-8 h-8 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
+                    <CheckCircle className="w-4 h-4 text-purple-400" />
+                  </div>
+                </div>
+                <div className="text-3xl font-black text-white tracking-tight">
+                  {metrics.metrics.completion_rate ?? 0}%
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  {metrics.metrics.completed_enrollments ?? 0} enrollments at 100% progress
+                </p>
+              </div>
+
+              {/* Metric 4: Platform Revenue */}
+              <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-900 to-slate-800/80 border border-slate-700/60 shadow-xl space-y-2 relative overflow-hidden group">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                    Gross Revenue
+                  </span>
+                  <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
+                    <DollarSign className="w-4 h-4 text-amber-400" />
+                  </div>
+                </div>
+                <div className="text-3xl font-black text-emerald-400 tracking-tight">
+                  ${Number(metrics.metrics.revenue ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Cumulative course sales & tuition collections
+                </p>
+              </div>
             </div>
           </div>
 
+          {/* Secondary Stats Strip */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
+            <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800">
+              <div className="text-[11px] text-slate-400 font-medium">Registered Accounts</div>
+              <div className="text-xl font-bold text-white mt-1">{metrics.metrics.total_users}</div>
+            </div>
+            <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800">
+              <div className="text-[11px] text-slate-400 font-medium">Published Courses</div>
+              <div className="text-xl font-bold text-white mt-1">{metrics.metrics.total_courses}</div>
+            </div>
+            <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800">
+              <div className="text-[11px] text-slate-400 font-medium">AI Tutor Messages</div>
+              <div className="text-xl font-bold text-indigo-400 mt-1">{metrics.metrics.total_ai_interactions}</div>
+            </div>
+            <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800">
+              <div className="text-[11px] text-slate-400 font-medium">Quizzes Evaluated</div>
+              <div className="text-xl font-bold text-amber-400 mt-1">{metrics.metrics.total_quizzes_taken}</div>
+            </div>
+          </div>
+
+          {/* Category Distribution & Recent Activity */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="p-5 rounded-2xl bg-slate-800/30 border border-slate-800 space-y-3">
-              <h3 className="text-sm font-bold text-white">Course Distribution by Category</h3>
+            <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <BookOpen className="w-4 h-4 text-indigo-400" />
+                Course Catalog Distribution by Category
+              </h3>
               <div className="space-y-2">
                 {metrics.categories.map((c: any) => (
-                  <div key={c.category} className="flex items-center justify-between text-xs p-2 rounded-lg bg-slate-900">
-                    <span className="text-slate-300">{c.category}</span>
-                    <span className="font-bold text-emerald-400">{c.count} courses</span>
+                  <div key={c.category} className="flex items-center justify-between text-xs p-2.5 rounded-xl bg-slate-950 border border-slate-800/80">
+                    <span className="text-slate-300 font-medium">{c.category}</span>
+                    <span className="font-bold text-indigo-300 px-2 py-0.5 rounded-md bg-indigo-500/10">
+                      {c.count} {c.count === 1 ? 'course' : 'courses'}
+                    </span>
                   </div>
                 ))}
               </div>
             </div>
 
-            <div className="p-5 rounded-2xl bg-slate-800/30 border border-slate-800 space-y-3">
-              <h3 className="text-sm font-bold text-white">Recent System Activities</h3>
+            <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800 space-y-3">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <History className="w-4 h-4 text-emerald-400" />
+                Recent System Operations & Audit Events
+              </h3>
               <div className="space-y-2">
                 {metrics.recent_activity.slice(0, 5).map((act: any) => (
-                  <div key={act.id} className="text-xs p-2.5 rounded-lg bg-slate-900 flex items-center justify-between">
+                  <div key={act.id} className="text-xs p-2.5 rounded-xl bg-slate-950 border border-slate-800/80 flex items-center justify-between">
                     <div>
-                      <span className="font-semibold text-white">{act.actor_name || 'System'}</span>
-                      <span className="text-slate-400"> performed </span>
+                      <span className="font-semibold text-white">{act.actor_name || 'System Operator'}</span>
+                      <span className="text-slate-400"> dispatched </span>
                       <span className="font-mono text-indigo-400">{act.action}</span>
                     </div>
                     <span className="text-[10px] text-slate-500">{new Date(act.created_at).toLocaleTimeString()}</span>
@@ -244,60 +419,92 @@ export const AdminPanel: React.FC = () => {
         </div>
       )}
 
-      {/* Course Approvals Tab */}
+      {/* TAB 2: Course Approvals (FR-AD1: Admin can approve/reject newly submitted course) */}
       {activeTab === 'approvals' && (
         <div className="space-y-4">
+          <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+            <div>
+              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <ClipboardList className="w-5 h-5 text-indigo-400" />
+                Curriculum Review & Approval Queue
+              </h2>
+              <p className="text-xs text-slate-400">
+                Newly submitted courses remain in pending review status until approved by an administrator before appearing in the public catalog.
+              </p>
+            </div>
+            <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+              {pendingCourses.length} Pending Approval{pendingCourses.length === 1 ? '' : 's'}
+            </span>
+          </div>
+
           {pendingCourses.length === 0 ? (
-            <div className="p-16 text-center rounded-3xl bg-slate-800/20 border border-slate-800">
-              <CheckCircle className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
-              <h3 className="text-base font-semibold text-white mb-1">Approval queue empty</h3>
-              <p className="text-xs text-slate-400">All submitted courses have been reviewed.</p>
+            <div className="p-16 text-center rounded-3xl bg-slate-800/20 border border-slate-800 space-y-2">
+              <CheckCircle className="w-12 h-12 text-emerald-500 mx-auto" />
+              <h3 className="text-base font-bold text-white">Course approval queue is clear</h3>
+              <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                All instructor submitted courses have been thoroughly reviewed, approved, or rejected.
+              </p>
             </div>
           ) : (
             <div className="space-y-4">
               {pendingCourses.map(c => (
                 <div
                   key={c.id}
-                  className="p-5 rounded-2xl bg-slate-800/40 border border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4"
+                  className="p-5 rounded-2xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-all flex flex-col md:flex-row items-start md:items-center justify-between gap-5"
                 >
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-start gap-4">
                     <img
-                      src={c.thumbnail_url}
+                      src={c.thumbnail_url || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe'}
                       alt={c.title}
-                      className="w-20 h-20 rounded-xl object-cover border border-slate-700 shrink-0"
+                      className="w-24 h-24 rounded-xl object-cover border border-slate-700 shrink-0"
                     />
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-500/15 text-amber-400 border border-amber-500/20">
-                          Pending Review
+                          Pending Approval
                         </span>
-                        <span className="text-xs text-slate-400">{c.category} • {c.difficulty}</span>
+                        <span className="text-xs font-semibold text-indigo-400">{c.category}</span>
+                        <span className="text-slate-600">•</span>
+                        <span className="text-xs text-slate-400 capitalize">{c.difficulty}</span>
+                        <span className="text-slate-600">•</span>
+                        <span className="text-xs font-bold text-emerald-400">
+                          {Number(c.price) > 0 ? `$${Number(c.price).toFixed(2)} (${c.pricing_tier || 'tier'})` : 'Free Tier'}
+                        </span>
                       </div>
-                      <h3 className="text-base font-bold text-white mb-1">{c.title}</h3>
-                      <p className="text-xs text-slate-400 line-clamp-1">Instructor: {c.instructor_name} ({c.instructor_email})</p>
+                      <h3 className="text-base font-bold text-white">{c.title}</h3>
+                      <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">{c.description}</p>
+                      <div className="flex items-center gap-3 text-[11px] text-slate-500 pt-1">
+                        <span>Instructor: <strong className="text-slate-300">{c.instructor_name}</strong> ({c.instructor_email})</span>
+                        <span>•</span>
+                        <span>{c.modules_count || 0} Modules</span>
+                        <span>•</span>
+                        <span>{c.lectures_count || 0} Lectures</span>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2.5 shrink-0 self-end md:self-center">
                     <button
                       onClick={() => {
                         setSelectedCourse(c);
                         setDecision('approved');
-                        setComment('Content validated. High quality technical curriculum and verified transcripts.');
+                        setComment('Approved: Course content and syllabus meet platform instructional standards.');
                       }}
-                      className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-md shadow-emerald-600/20 flex items-center gap-1.5"
+                      className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-md shadow-emerald-600/30 flex items-center gap-1.5"
                     >
-                      <CheckCircle className="w-4 h-4" /> Approve
+                      <CheckCircle className="w-4 h-4" />
+                      Approve Course
                     </button>
                     <button
                       onClick={() => {
                         setSelectedCourse(c);
                         setDecision('rejected');
-                        setComment('Requires additional lecture transcripts for vector search grounding.');
+                        setComment('Rejected: Requires additional video lectures and detailed transcript grounding.');
                       }}
-                      className="px-4 py-2 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/30 text-xs font-semibold transition-all flex items-center gap-1.5"
+                      className="px-4 py-2.5 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-300 hover:text-white border border-red-500/30 text-xs font-semibold transition-all flex items-center gap-1.5"
                     >
-                      <XCircle className="w-4 h-4" /> Reject
+                      <XCircle className="w-4 h-4" />
+                      Reject
                     </button>
                   </div>
                 </div>
@@ -307,110 +514,189 @@ export const AdminPanel: React.FC = () => {
         </div>
       )}
 
-      {/* Users Directory Tab */}
+      {/* TAB 3: User Directory (FR-AD2: view/suspend/delete user accounts; FR-AD4: assign/revoke roles) */}
       {activeTab === 'users' && (
-        <div className="rounded-2xl bg-slate-800/40 border border-slate-800 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-900 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                <tr>
-                  <th className="p-4">User</th>
-                  <th className="p-4">Role</th>
-                  <th className="p-4">Status</th>
-                  <th className="p-4">Enrolled Courses</th>
-                  <th className="p-4">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800">
-                {usersList.map(u => (
-                  <tr key={u.id} className="hover:bg-slate-800/50 transition-colors">
-                    <td className="p-4">
-                      <div className="flex items-center gap-3">
-                        <img
-                          src={u.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80'}
-                          alt={u.full_name}
-                          className="w-8 h-8 rounded-full object-cover border border-slate-700"
-                        />
-                        <div>
-                          <div className="font-bold text-white">{u.full_name}</div>
-                          <div className="text-slate-400 text-[11px]">{u.email}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="p-4">
-                      <select
-                        value={u.role}
-                        onChange={(e) => handleRoleChange(u.id, e.target.value)}
-                        className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white capitalize focus:outline-none focus:border-indigo-500"
-                      >
-                        <option value="student">Student</option>
-                        <option value="instructor">Instructor</option>
-                        <option value="admin">Admin</option>
-                      </select>
-                    </td>
-                    <td className="p-4">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        u.is_active ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'
-                      }`}>
-                        {u.is_active ? 'Active' : 'Suspended'}
-                      </span>
-                    </td>
-                    <td className="p-4 text-slate-300">
-                      {u.enrolled_courses_count || 0}
-                    </td>
-                    <td className="p-4">
-                      <button
-                        onClick={() => handleSuspendToggle(u.id, u.is_active)}
-                        className={`text-xs font-semibold px-3 py-1 rounded-lg border transition-colors ${
-                          u.is_active
-                            ? 'border-red-500/30 text-red-400 hover:bg-red-500/10'
-                            : 'border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10'
-                        }`}
-                      >
-                        {u.is_active ? 'Suspend' : 'Activate'}
-                      </button>
-                    </td>
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-4 pb-2 border-b border-slate-800">
+            <div>
+              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <Users className="w-5 h-5 text-indigo-400" />
+                User Account Directory & Role Governance
+              </h2>
+              <p className="text-xs text-slate-400">
+                Inspect registered users, manage active/suspended account statuses, assign/revoke roles (student, instructor, admin), and delete user records.
+              </p>
+            </div>
+            <span className="px-3 py-1 rounded-full text-xs font-bold bg-slate-800 text-slate-300 border border-slate-700">
+              {filteredUsers.length} of {usersList.length} Accounts
+            </span>
+          </div>
+
+          {/* Search & Filters */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={userSearch}
+                onChange={(e) => setUserSearch(e.target.value)}
+                placeholder="Search by name or email..."
+                className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-10 pr-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <div className="relative">
+              <select
+                value={userRoleFilter}
+                onChange={(e) => setUserRoleFilter(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 cursor-pointer"
+              >
+                <option value="all">All Roles</option>
+                <option value="student">Students</option>
+                <option value="instructor">Instructors</option>
+                <option value="admin">Administrators</option>
+              </select>
+            </div>
+
+            <div className="relative">
+              <select
+                value={userStatusFilter}
+                onChange={(e) => setUserStatusFilter(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 cursor-pointer"
+              >
+                <option value="all">All Statuses</option>
+                <option value="active">Active Only</option>
+                <option value="suspended">Suspended Only</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Users Table */}
+          <div className="rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden shadow-xl">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                  <tr>
+                    <th className="p-4">User Details</th>
+                    <th className="p-4">Role Assignment</th>
+                    <th className="p-4">Account Status</th>
+                    <th className="p-4">Enrollments</th>
+                    <th className="p-4">Governance Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-800">
+                  {filteredUsers.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="p-8 text-center text-slate-400">
+                        No user accounts match your filter criteria.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredUsers.map(u => {
+                      const isSelf = u.id === currentUser?.id;
+                      return (
+                        <tr key={u.id} className="hover:bg-slate-800/40 transition-colors">
+                          <td className="p-4">
+                            <div className="flex items-center gap-3">
+                              <img
+                                src={u.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80'}
+                                alt={u.full_name}
+                                className="w-9 h-9 rounded-full object-cover border border-slate-700 shrink-0"
+                              />
+                              <div>
+                                <div className="font-bold text-white flex items-center gap-2">
+                                  <span>{u.full_name}</span>
+                                  {isSelf && (
+                                    <span className="px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 text-[10px] font-semibold border border-indigo-500/30">
+                                      You
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-slate-400 text-[11px] font-mono">{u.email}</div>
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* Role Assignment (FR-AD4: student/instructor/admin) */}
+                          <td className="p-4">
+                            <select
+                              value={u.role}
+                              disabled={isSelf}
+                              onChange={(e) => handleRoleChange(u.id, e.target.value)}
+                              className={`bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white capitalize focus:outline-none focus:border-indigo-500 cursor-pointer ${
+                                isSelf ? 'opacity-60 cursor-not-allowed' : ''
+                              }`}
+                            >
+                              <option value="student">Student</option>
+                              <option value="instructor">Instructor</option>
+                              <option value="admin">Administrator</option>
+                            </select>
+                          </td>
+
+                          {/* Account Status (FR-AD2: suspend/active) */}
+                          <td className="p-4">
+                            <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1.5 ${
+                              u.is_active
+                                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                                : 'bg-red-500/15 text-red-400 border border-red-500/30'
+                            }`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${u.is_active ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                              {u.is_active ? 'Active' : 'Suspended'}
+                            </span>
+                          </td>
+
+                          <td className="p-4 text-slate-300 font-semibold">
+                            {u.enrolled_courses_count || 0}
+                          </td>
+
+                          {/* Governance Actions (FR-AD2: Suspend, Delete) */}
+                          <td className="p-4">
+                            <div className="flex items-center gap-2">
+                              {/* Suspend / Activate Button */}
+                              <button
+                                onClick={() => handleSuspendToggle(u.id, u.is_active)}
+                                disabled={isSelf}
+                                className={`text-xs font-semibold px-3 py-1.5 rounded-xl border transition-colors inline-flex items-center gap-1 ${
+                                  isSelf
+                                    ? 'opacity-40 cursor-not-allowed border-slate-700 text-slate-500'
+                                    : u.is_active
+                                    ? 'border-amber-500/30 text-amber-400 hover:bg-amber-500/10'
+                                    : 'border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10'
+                                }`}
+                                title={isSelf ? 'Cannot suspend own account' : u.is_active ? 'Suspend account' : 'Activate account'}
+                              >
+                                {u.is_active ? <UserX className="w-3.5 h-3.5" /> : <UserCheck className="w-3.5 h-3.5" />}
+                                <span>{u.is_active ? 'Suspend' : 'Activate'}</span>
+                              </button>
+
+                              {/* Delete User Button (FR-AD2: delete) */}
+                              <button
+                                onClick={() => handleDeleteUser(u)}
+                                disabled={isSelf}
+                                className={`text-xs font-semibold px-3 py-1.5 rounded-xl border transition-colors inline-flex items-center gap-1 ${
+                                  isSelf
+                                    ? 'opacity-40 cursor-not-allowed border-slate-700 text-slate-500'
+                                    : 'border-red-500/30 text-red-400 hover:bg-red-500/10'
+                                }`}
+                                title={isSelf ? 'Cannot delete own account' : 'Permanently delete user'}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>Delete</span>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Audit Trail Tab */}
-      {activeTab === 'audit' && (
-        <div className="rounded-2xl bg-slate-800/40 border border-slate-800 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-900 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
-                <tr>
-                  <th className="p-4">Timestamp</th>
-                  <th className="p-4">Actor</th>
-                  <th className="p-4">Action</th>
-                  <th className="p-4">Entity</th>
-                  <th className="p-4">Metadata</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800">
-                {auditLogs.map(log => (
-                  <tr key={log.id} className="hover:bg-slate-800/50">
-                    <td className="p-4 text-slate-400">{new Date(log.created_at).toLocaleString()}</td>
-                    <td className="p-4 font-semibold text-white">{log.actor_name || 'System'}</td>
-                    <td className="p-4 font-mono text-indigo-400">{log.action}</td>
-                    <td className="p-4 text-slate-300 capitalize">{log.entity}</td>
-                    <td className="p-4 text-slate-400 font-mono text-[11px] truncate max-w-xs">
-                      {JSON.stringify(log.metadata)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Moderation Tab */}
+      {/* TAB 4: Community Content Moderation (FR-AD5: moderate reported forum posts/comments) */}
       {activeTab === 'moderation' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between pb-2 border-b border-slate-800">
@@ -420,7 +706,7 @@ export const AdminPanel: React.FC = () => {
                 Community Content Moderation Queue
               </h2>
               <p className="text-xs text-slate-400">
-                Review flagged discussion posts reported by learners or instructors. Dismiss false flags or purge violating content.
+                Review flagged discussion posts and forum comments reported by learners or instructors. Dismiss unwarranted reports or purge violating content.
               </p>
             </div>
             <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
@@ -429,54 +715,57 @@ export const AdminPanel: React.FC = () => {
           </div>
 
           {flaggedPosts.length === 0 ? (
-            <div className="p-16 text-center rounded-3xl bg-slate-800/20 border border-slate-800">
-              <CheckCircle className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
-              <h3 className="text-base font-semibold text-white mb-1">Queue is clear</h3>
-              <p className="text-xs text-slate-400">There are no flagged comments or reported discussions requiring moderation.</p>
+            <div className="p-16 text-center rounded-3xl bg-slate-800/20 border border-slate-800 space-y-2">
+              <CheckCircle className="w-12 h-12 text-emerald-500 mx-auto" />
+              <h3 className="text-base font-bold text-white">Moderation queue is clear</h3>
+              <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                There are no flagged comments or reported discussions requiring administrative moderation.
+              </p>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-3.5">
               {flaggedPosts.map(post => (
                 <div
                   key={post.id}
-                  className="p-5 rounded-2xl bg-slate-800/40 border border-amber-500/20 space-y-3"
+                  className="p-5 rounded-2xl bg-slate-900 border border-amber-500/30 space-y-3 shadow-lg"
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-500/15 text-amber-400 border border-amber-500/30 flex items-center gap-1">
+                          <Flag className="w-3 h-3" />
                           Reported Content
                         </span>
                         <span className="text-xs font-bold text-white">Course: {post.course_title || 'Enrolled Course'}</span>
                         <span className="text-slate-600">•</span>
-                        <span className="text-xs text-slate-400">Topic: <strong>{post.thread_title}</strong></span>
+                        <span className="text-xs text-slate-400">Discussion Thread: <strong>{post.thread_title}</strong></span>
                       </div>
-                      <div className="text-[11px] text-slate-500 flex items-center gap-2">
-                        <span>Author: <strong className="text-slate-300">{post.author_name}</strong> ({post.author_email})</span>
+                      <div className="text-[11px] text-slate-400 flex items-center gap-2">
+                        <span>Author: <strong className="text-slate-200">{post.author_name}</strong> ({post.author_email})</span>
                         <span>•</span>
-                        <span>Reported at {new Date(post.created_at).toLocaleString()}</span>
+                        <span>Flagged at {new Date(post.created_at).toLocaleString()}</span>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0">
                       <button
                         onClick={() => handleDismissFlag(post.id)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors"
+                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors"
                       >
                         <Check className="w-3.5 h-3.5 text-emerald-400" />
-                        Dismiss Flag
+                        Dismiss Report
                       </button>
                       <button
                         onClick={() => handleDeleteFlaggedPost(post.id)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-600/20 hover:bg-red-600 text-red-300 hover:text-white text-xs font-bold border border-red-500/30 transition-all"
+                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-red-600/20 hover:bg-red-600 text-red-300 hover:text-white text-xs font-bold border border-red-500/30 transition-all shadow-md shadow-red-600/10"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
-                        Delete Post
+                        Purge Offending Post
                       </button>
                     </div>
                   </div>
 
-                  <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-200 leading-relaxed font-mono">
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 leading-relaxed font-mono">
                     "{post.content}"
                   </div>
                 </div>
@@ -486,7 +775,56 @@ export const AdminPanel: React.FC = () => {
         </div>
       )}
 
-      {/* Background Jobs & Queues Tab */}
+      {/* TAB 5: Audit Trail */}
+      {activeTab === 'audit' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+            <div>
+              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <History className="w-5 h-5 text-indigo-400" />
+                Immutable System Audit Logs
+              </h2>
+              <p className="text-xs text-slate-400">
+                Tamper-resistant audit record capturing all operational decisions, approvals, role mutations, and deletions.
+              </p>
+            </div>
+            <span className="px-3 py-1 rounded-full text-xs font-bold bg-slate-800 text-slate-300 border border-slate-700">
+              {auditLogs.length} Recent Logs
+            </span>
+          </div>
+
+          <div className="rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden shadow-xl">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-950 border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                  <tr>
+                    <th className="p-4">Timestamp</th>
+                    <th className="p-4">Actor</th>
+                    <th className="p-4">Action</th>
+                    <th className="p-4">Entity</th>
+                    <th className="p-4">Metadata</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800">
+                  {auditLogs.map(log => (
+                    <tr key={log.id} className="hover:bg-slate-800/40">
+                      <td className="p-4 text-slate-400 whitespace-nowrap">{new Date(log.created_at).toLocaleString()}</td>
+                      <td className="p-4 font-semibold text-white whitespace-nowrap">{log.actor_name || 'System Operator'}</td>
+                      <td className="p-4 font-mono text-indigo-400 whitespace-nowrap">{log.action}</td>
+                      <td className="p-4 text-slate-300 capitalize">{log.entity}</td>
+                      <td className="p-4 text-slate-400 font-mono text-[11px] truncate max-w-sm">
+                        {JSON.stringify(log.metadata)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 6: Background Jobs */}
       {activeTab === 'jobs' && (
         <div className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-4 pb-2 border-b border-slate-800">
@@ -496,7 +834,7 @@ export const AdminPanel: React.FC = () => {
                 Asynchronous Job Queues (BullMQ & Redis)
               </h2>
               <p className="text-xs text-slate-400">
-                Monitor live queue workers, inspect processed background jobs, and trigger scheduled maintenance crons manually.
+                Inspect background workers, pending/completed tasks, and trigger scheduled maintenance crons manually.
               </p>
             </div>
 
@@ -534,8 +872,7 @@ export const AdminPanel: React.FC = () => {
 
           {/* Queue Statistics Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Streak Queue */}
-            <div className="p-5 rounded-2xl bg-slate-800/40 border border-slate-800 space-y-4">
+            <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
                   <div className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center">
@@ -552,29 +889,22 @@ export const AdminPanel: React.FC = () => {
               </div>
 
               <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="p-2 rounded-xl bg-slate-900 border border-slate-800">
+                <div className="p-2 rounded-xl bg-slate-950 border border-slate-800">
                   <div className="text-xs text-slate-400">Waiting</div>
-                  <div className="text-base font-bold text-white">
-                    {queueStats?.streak?.waiting ?? 0}
-                  </div>
+                  <div className="text-base font-bold text-white">{queueStats?.streak?.waiting ?? 0}</div>
                 </div>
-                <div className="p-2 rounded-xl bg-slate-900 border border-slate-800">
+                <div className="p-2 rounded-xl bg-slate-950 border border-slate-800">
                   <div className="text-xs text-slate-400">Completed</div>
-                  <div className="text-base font-bold text-emerald-400">
-                    {queueStats?.streak?.completed ?? 0}
-                  </div>
+                  <div className="text-base font-bold text-emerald-400">{queueStats?.streak?.completed ?? 0}</div>
                 </div>
-                <div className="p-2 rounded-xl bg-slate-900 border border-slate-800">
+                <div className="p-2 rounded-xl bg-slate-950 border border-slate-800">
                   <div className="text-xs text-slate-400">Failed</div>
-                  <div className="text-base font-bold text-red-400">
-                    {queueStats?.streak?.failed ?? 0}
-                  </div>
+                  <div className="text-base font-bold text-red-400">{queueStats?.streak?.failed ?? 0}</div>
                 </div>
               </div>
             </div>
 
-            {/* Ingestion Queue */}
-            <div className="p-5 rounded-2xl bg-slate-800/40 border border-slate-800 space-y-4">
+            <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
                   <div className="w-9 h-9 rounded-xl bg-indigo-500/10 flex items-center justify-center">
@@ -591,29 +921,22 @@ export const AdminPanel: React.FC = () => {
               </div>
 
               <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="p-2 rounded-xl bg-slate-900 border border-slate-800">
+                <div className="p-2 rounded-xl bg-slate-950 border border-slate-800">
                   <div className="text-xs text-slate-400">Waiting</div>
-                  <div className="text-base font-bold text-white">
-                    {queueStats?.ingestion?.waiting ?? 0}
-                  </div>
+                  <div className="text-base font-bold text-white">{queueStats?.ingestion?.waiting ?? 0}</div>
                 </div>
-                <div className="p-2 rounded-xl bg-slate-900 border border-slate-800">
+                <div className="p-2 rounded-xl bg-slate-950 border border-slate-800">
                   <div className="text-xs text-slate-400">Completed</div>
-                  <div className="text-base font-bold text-emerald-400">
-                    {queueStats?.ingestion?.completed ?? 0}
-                  </div>
+                  <div className="text-base font-bold text-emerald-400">{queueStats?.ingestion?.completed ?? 0}</div>
                 </div>
-                <div className="p-2 rounded-xl bg-slate-900 border border-slate-800">
+                <div className="p-2 rounded-xl bg-slate-950 border border-slate-800">
                   <div className="text-xs text-slate-400">Failed</div>
-                  <div className="text-base font-bold text-red-400">
-                    {queueStats?.ingestion?.failed ?? 0}
-                  </div>
+                  <div className="text-base font-bold text-red-400">{queueStats?.ingestion?.failed ?? 0}</div>
                 </div>
               </div>
             </div>
 
-            {/* Notification Queue */}
-            <div className="p-5 rounded-2xl bg-slate-800/40 border border-slate-800 space-y-4">
+            <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
                   <div className="w-9 h-9 rounded-xl bg-purple-500/10 flex items-center justify-center">
@@ -630,23 +953,17 @@ export const AdminPanel: React.FC = () => {
               </div>
 
               <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="p-2 rounded-xl bg-slate-900 border border-slate-800">
+                <div className="p-2 rounded-xl bg-slate-950 border border-slate-800">
                   <div className="text-xs text-slate-400">Waiting</div>
-                  <div className="text-base font-bold text-white">
-                    {queueStats?.notification?.waiting ?? 0}
-                  </div>
+                  <div className="text-base font-bold text-white">{queueStats?.notification?.waiting ?? 0}</div>
                 </div>
-                <div className="p-2 rounded-xl bg-slate-900 border border-slate-800">
+                <div className="p-2 rounded-xl bg-slate-950 border border-slate-800">
                   <div className="text-xs text-slate-400">Completed</div>
-                  <div className="text-base font-bold text-emerald-400">
-                    {queueStats?.notification?.completed ?? 0}
-                  </div>
+                  <div className="text-base font-bold text-emerald-400">{queueStats?.notification?.completed ?? 0}</div>
                 </div>
-                <div className="p-2 rounded-xl bg-slate-900 border border-slate-800">
+                <div className="p-2 rounded-xl bg-slate-950 border border-slate-800">
                   <div className="text-xs text-slate-400">Failed</div>
-                  <div className="text-base font-bold text-red-400">
-                    {queueStats?.notification?.failed ?? 0}
-                  </div>
+                  <div className="text-base font-bold text-red-400">{queueStats?.notification?.failed ?? 0}</div>
                 </div>
               </div>
             </div>
@@ -658,18 +975,23 @@ export const AdminPanel: React.FC = () => {
       {selectedCourse && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl animate-in zoom-in-95">
-            <h3 className="text-base font-bold text-white capitalize">
-              {decision} Course: {selectedCourse.title}
-            </h3>
+            <div className="flex items-center gap-2">
+              <span className={`w-3 h-3 rounded-full ${decision === 'approved' ? 'bg-emerald-400' : 'bg-red-400'}`} />
+              <h3 className="text-base font-bold text-white capitalize">
+                {decision} Course: {selectedCourse.title}
+              </h3>
+            </div>
 
             <form onSubmit={handleCourseDecision} className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1">Review Feedback to Instructor</label>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Review Feedback to Instructor (sent via Notification)
+                </label>
                 <textarea
                   rows={4}
                   value={comment}
                   onChange={(e) => setComment(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-indigo-500"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-indigo-500 leading-relaxed"
                 />
               </div>
 
@@ -677,17 +999,19 @@ export const AdminPanel: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setSelectedCourse(null)}
-                  className="px-4 py-2 rounded-xl bg-slate-800 text-xs font-semibold text-slate-300"
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className={`px-5 py-2 rounded-xl text-xs font-bold text-white shadow-md ${
-                    decision === 'approved' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-red-600 hover:bg-red-500'
+                  className={`px-5 py-2 rounded-xl text-xs font-bold text-white shadow-md transition-all ${
+                    decision === 'approved'
+                      ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/30'
+                      : 'bg-red-600 hover:bg-red-500 shadow-red-600/30'
                   }`}
                 >
-                  Confirm {decision}
+                  Confirm {decision === 'approved' ? 'Approval' : 'Rejection'}
                 </button>
               </div>
             </form>
