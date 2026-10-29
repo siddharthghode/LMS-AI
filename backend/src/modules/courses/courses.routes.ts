@@ -61,7 +61,7 @@ coursesRouter.get('/', cacheMiddleware(300, 'cache:courses:list'), async (req: R
 
     const listQuery = `
       SELECT c.id, c.title, c.description, c.category, c.difficulty, c.thumbnail_url,
-             c.price, c.status, c.created_at,
+             c.price, COALESCE(c.pricing_tier, 'free') as pricing_tier, c.status, c.created_at,
              COALESCE(c.rating, 4.8)::float as rating,
              COALESCE(c.ratings_count, 0) as ratings_count,
              u.id as instructor_id, u.full_name as instructor_name, u.avatar_url as instructor_avatar,
@@ -155,6 +155,14 @@ coursesRouter.get('/:id', cacheMiddleware(300, 'cache:courses:detail'), async (r
   }
 });
 
+const TIER_PRICE_MAP: Record<string, number> = {
+  free: 0,
+  tier_1: 19.99,
+  tier_2: 49.99,
+  tier_3: 79.99,
+  tier_4: 99.99,
+};
+
 // POST /courses - Create course (instructor / admin)
 const createCourseSchema = z.object({
   title: z.string().min(3),
@@ -162,7 +170,8 @@ const createCourseSchema = z.object({
   category: z.string().optional(),
   difficulty: z.enum(['beginner', 'intermediate', 'advanced']).optional().default('beginner'),
   thumbnail_url: z.string().optional(),
-  price: z.number().optional().default(0),
+  pricing_tier: z.string().optional(),
+  price: z.union([z.number(), z.string().transform(v => parseFloat(v) || 0)]).optional(),
   rating: z.number().optional().default(4.8),
 });
 
@@ -170,12 +179,31 @@ coursesRouter.post('/', authenticateToken, requireRole('instructor', 'admin'), a
   try {
     const data = createCourseSchema.parse(req.body);
 
+    let pricingTier = data.pricing_tier;
+    let finalPrice = typeof data.price === 'number' ? data.price : (data.price !== undefined ? parseFloat(data.price as any) : undefined);
+
+    if (!pricingTier) {
+      if (finalPrice !== undefined && finalPrice > 0) {
+        if (finalPrice === 19.99) pricingTier = 'tier_1';
+        else if (finalPrice === 49.99) pricingTier = 'tier_2';
+        else if (finalPrice === 79.99) pricingTier = 'tier_3';
+        else if (finalPrice === 99.99) pricingTier = 'tier_4';
+        else pricingTier = 'custom';
+      } else {
+        pricingTier = 'free';
+      }
+    }
+
+    if (finalPrice === undefined) {
+      finalPrice = TIER_PRICE_MAP[pricingTier] !== undefined ? TIER_PRICE_MAP[pricingTier] : 0;
+    }
+
     // Default status: instructor creates -> pending; admin creates -> approved
     const status = req.user!.role === 'admin' ? 'approved' : 'pending';
 
     const insertRes = await pool.query(
-      `INSERT INTO courses (instructor_id, title, description, category, difficulty, thumbnail_url, price, status, rating, ratings_count)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `INSERT INTO courses (instructor_id, title, description, category, difficulty, thumbnail_url, price, pricing_tier, status, rating, ratings_count)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
       [
         req.user!.id,
@@ -184,7 +212,8 @@ coursesRouter.post('/', authenticateToken, requireRole('instructor', 'admin'), a
         data.category || 'General',
         data.difficulty,
         data.thumbnail_url || 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=800&q=80',
-        data.price,
+        finalPrice,
+        pricingTier,
         status,
         data.rating,
         0,
@@ -195,7 +224,7 @@ coursesRouter.post('/', authenticateToken, requireRole('instructor', 'admin'), a
     await pool.query(
       `INSERT INTO audit_logs (actor_id, action, entity, entity_id, metadata)
        VALUES ($1, 'COURSE_CREATED', 'course', $2, $3)`,
-      [req.user!.id, insertRes.rows[0].id, JSON.stringify({ title: data.title, status })]
+      [req.user!.id, insertRes.rows[0].id, JSON.stringify({ title: data.title, status, pricing_tier: pricingTier, price: finalPrice })]
     );
 
     // Invalidate course cache
@@ -211,7 +240,7 @@ coursesRouter.post('/', authenticateToken, requireRole('instructor', 'admin'), a
 coursesRouter.put('/:id', authenticateToken, requireRole('instructor', 'admin'), async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id } = req.params;
-    const { title, description, category, difficulty, thumbnail_url, price, status } = req.body;
+    const { title, description, category, difficulty, thumbnail_url, price, pricing_tier, status } = req.body;
 
     // Verify ownership if not admin
     if (req.user!.role !== 'admin') {
@@ -234,10 +263,11 @@ coursesRouter.put('/:id', authenticateToken, requireRole('instructor', 'admin'),
            difficulty = COALESCE($4, difficulty),
            thumbnail_url = COALESCE($5, thumbnail_url),
            price = COALESCE($6, price),
-           status = COALESCE($7, status)
-       WHERE id = $8
+           pricing_tier = COALESCE($7, pricing_tier),
+           status = COALESCE($8, status)
+       WHERE id = $9
        RETURNING *`,
-      [title, description, category, difficulty, thumbnail_url, price, req.user!.role === 'admin' ? status : undefined, id]
+      [title, description, category, difficulty, thumbnail_url, price, pricing_tier, req.user!.role === 'admin' ? status : undefined, id]
     );
 
     await invalidateCachePattern('cache:courses:*');

@@ -196,6 +196,10 @@ export const InstructorDashboard: React.FC = () => {
                         {course.status}
                       </span>
                       <span className="text-[11px] text-slate-400 capitalize">{course.difficulty}</span>
+                      <span className="text-slate-600">•</span>
+                      <span className="text-[11px] font-semibold text-indigo-400">
+                        {Number(course.price) > 0 ? `$${Number(course.price).toFixed(2)}` : 'Free'}
+                      </span>
                     </div>
                     <h3 className="text-base font-bold text-white truncate mb-1">{course.title}</h3>
                     <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">{course.description}</p>

@@ -88,4 +88,59 @@ describe('Role-Based Access Control (RBAC) Tests', () => {
     expect(res.status).toBe(201);
     expect(res.body.title).toBe('Instructor Test Course RBAC');
   });
+
+  it('POST /api/v1/courses - Should support course creation with pricing tier (FR-I1)', async () => {
+    const res = await request(app)
+      .post('/api/v1/courses')
+      .set('Authorization', `Bearer ${instructorToken}`)
+      .send({
+        title: 'Complete Autonomous Agents Architecture',
+        description: 'Master autonomous reasoning loops, memory systems, and tool execution pipelines.',
+        category: 'Artificial Intelligence',
+        difficulty: 'advanced',
+        thumbnail_url: 'https://images.unsplash.com/photo-1677442136019-21780efad99a',
+        pricing_tier: 'tier_2',
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.title).toBe('Complete Autonomous Agents Architecture');
+    expect(res.body.description).toContain('autonomous reasoning loops');
+    expect(res.body.category).toBe('Artificial Intelligence');
+    expect(res.body.thumbnail_url).toBe('https://images.unsplash.com/photo-1677442136019-21780efad99a');
+    expect(res.body.pricing_tier).toBe('tier_2');
+    expect(parseFloat(res.body.price)).toBe(49.99);
+  });
+
+  it('POST /api/v1/courses - Should support free and custom pricing tiers', async () => {
+    // Free course
+    const freeRes = await request(app)
+      .post('/api/v1/courses')
+      .set('Authorization', `Bearer ${instructorToken}`)
+      .send({
+        title: 'Free Open-Source AI Fundamentals',
+        description: 'Free introduction to generative AI models.',
+        category: 'Artificial Intelligence',
+        pricing_tier: 'free',
+      });
+
+    expect(freeRes.status).toBe(201);
+    expect(freeRes.body.pricing_tier).toBe('free');
+    expect(parseFloat(freeRes.body.price)).toBe(0);
+
+    // Custom tier with price
+    const customRes = await request(app)
+      .post('/api/v1/courses')
+      .set('Authorization', `Bearer ${instructorToken}`)
+      .send({
+        title: 'Enterprise AI Strategy Consulting',
+        description: 'Private coaching and enterprise system design.',
+        category: 'Executive Education',
+        pricing_tier: 'custom',
+        price: 199.99,
+      });
+
+    expect(customRes.status).toBe(201);
+    expect(customRes.body.pricing_tier).toBe('custom');
+    expect(parseFloat(customRes.body.price)).toBe(199.99);
+  });
 });

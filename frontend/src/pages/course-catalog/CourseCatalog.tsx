@@ -24,6 +24,7 @@ interface Course {
   difficulty: string;
   thumbnail_url: string;
   price: string | number;
+  pricing_tier?: string;
   rating?: number;
   ratings_count?: number;
   instructor_name: string;
@@ -325,13 +326,18 @@ export const CourseCatalog: React.FC = () => {
                   </div>
 
                   <div className="p-5">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-[11px] font-bold text-indigo-400 uppercase tracking-wider">
+                    <div className="flex items-center justify-between mb-1 gap-2">
+                      <span className="text-[11px] font-bold text-indigo-400 uppercase tracking-wider truncate">
                         {course.category}
                       </span>
-                      <span className="text-[10px] font-bold text-emerald-300 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
-                        AI Tutor Ready
-                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-[10px] font-bold text-emerald-300 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                          AI Tutor
+                        </span>
+                        <span className="text-[10px] font-bold text-indigo-300 px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20">
+                          {Number(course.price) > 0 ? `$${Number(course.price).toFixed(2)}` : 'Free'}
+                        </span>
+                      </div>
                     </div>
 
                     <h3 className="text-base font-bold text-white mb-2 line-clamp-1 group-hover:text-indigo-300 transition-colors">
@@ -373,7 +379,7 @@ export const CourseCatalog: React.FC = () => {
                         <span>Enrolling...</span>
                       ) : (
                         <>
-                          <span>Enroll Now — Free</span>
+                          <span>Enroll Now — {Number(course.price) > 0 ? `$${Number(course.price).toFixed(2)}` : 'Free'}</span>
                           <ArrowRight className="w-3.5 h-3.5" />
                         </>
                       )}
