@@ -15,7 +15,12 @@ import {
   Check,
   Star,
   Layers,
-  Users
+  Users,
+  Paperclip,
+  Upload,
+  Plus,
+  Trash2,
+  ExternalLink
 } from 'lucide-react';
 
 interface PricingTierOption {
@@ -119,12 +124,52 @@ export const CourseAuthoring: React.FC = () => {
   const [lectureTitle, setLectureTitle] = useState('Lecture 1.1: System Architecture Overview');
   const [videoUrl, setVideoUrl] = useState('https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4');
   const [transcript, setTranscript] = useState('In this lecture, we introduce high-performance retrieval architectures, detailing how vector embeddings and token chunking enable reliable semantic search without context loss.');
+  
+  // Supplementary Materials / Slide Upload (FR-I2)
+  const [resourceUrls, setResourceUrls] = useState<string[]>([
+    'https://raw.githubusercontent.com/rag-systems/architecture/main/vector_pipeline.pdf'
+  ]);
+  const [isUploadingResource, setIsUploadingResource] = useState(false);
+  const [newResourceUrl, setNewResourceUrl] = useState('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGeneratingQuiz, setIsGeneratingQuiz] = useState(false);
   const [generatedQuiz, setGeneratedQuiz] = useState<any>(null);
   const [errorMsg, setErrorMsg] = useState('');
   const [imgError, setImgError] = useState(false);
+
+  const handleResourceFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const file = e.target.files[0];
+    setIsUploadingResource(true);
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await api.post('/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      if (res.data?.url) {
+        setResourceUrls(prev => [...prev, res.data.url]);
+      }
+    } catch (err) {
+      console.error('Resource upload failed:', err);
+    } finally {
+      setIsUploadingResource(false);
+    }
+  };
+
+  const handleAddManualResource = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newResourceUrl.trim()) {
+      setResourceUrls(prev => [...prev, newResourceUrl.trim()]);
+      setNewResourceUrl('');
+    }
+  };
+
+  const handleRemoveResource = (index: number) => {
+    setResourceUrls(prev => prev.filter((_, idx) => idx !== index));
+  };
 
   // Computed effective price
   const getEffectivePrice = (): number => {
@@ -199,13 +244,14 @@ export const CourseAuthoring: React.FC = () => {
       });
       const moduleId = modRes.data.id;
 
-      // 3. Add initial lecture
+      // 3. Add initial lecture with resource_urls (FR-I2)
       const lecRes = await api.post(`/courses/modules/${moduleId}/lectures`, {
         title: lectureTitle.trim() || 'Lecture 1.1',
         video_url: videoUrl.trim(),
         transcript: transcript.trim(),
         duration_seconds: 420,
         order_index: 1,
+        resource_urls: resourceUrls,
       });
 
       // 4. If AI quiz was generated, save it
@@ -654,6 +700,73 @@ export const CourseAuthoring: React.FC = () => {
                     placeholder="Paste lecture transcript..."
                     className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
                   />
+                </div>
+
+                {/* Supplementary Materials & Slides (FR-I2) */}
+                <div className="md:col-span-2 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                      <Paperclip className="w-3.5 h-3.5 text-indigo-400" />
+                      Supplementary Lecture Materials & Slides (PDF / Code / Slides)
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-indigo-300 text-[11px] font-semibold border border-slate-700 cursor-pointer transition-colors">
+                      <Upload className={`w-3.5 h-3.5 ${isUploadingResource ? 'animate-spin' : ''}`} />
+                      <span>{isUploadingResource ? 'Uploading...' : 'Upload Slides / Files'}</span>
+                      <input
+                        type="file"
+                        onChange={handleResourceFileUpload}
+                        className="hidden"
+                        accept=".pdf,.ppt,.pptx,.zip,.tar.gz,.py,.ts,.js,.docx,.txt,.md"
+                      />
+                    </label>
+                  </div>
+
+                  {resourceUrls.length > 0 && (
+                    <div className="space-y-1.5">
+                      {resourceUrls.map((url, idx) => (
+                        <div key={idx} className="flex items-center justify-between p-2.5 rounded-lg bg-slate-800/60 border border-slate-700 text-xs">
+                          <div className="flex items-center gap-2 truncate text-slate-300">
+                            <Paperclip className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                            <span className="truncate">{url}</span>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-slate-400 hover:text-white"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveResource(idx)}
+                              className="text-slate-500 hover:text-red-400 transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={newResourceUrl}
+                      onChange={(e) => setNewResourceUrl(e.target.value)}
+                      placeholder="Or paste external resource URL (e.g. GitHub repo, Google Drive slides)..."
+                      className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddManualResource}
+                      className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors"
+                    >
+                      Add URL
+                    </button>
+                  </div>
                 </div>
               </div>
 

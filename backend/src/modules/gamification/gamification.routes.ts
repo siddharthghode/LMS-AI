@@ -48,6 +48,34 @@ gamificationRouter.get(['/users/me/streak', '/me/streak', '/streak'], authentica
   }
 });
 
+// GET /mastery/me - Student topic mastery scores (FR-A8)
+gamificationRouter.get(['/mastery/me', '/users/me/mastery', '/me/mastery'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+  try {
+    const masteryRes = await pool.query(
+      `SELECT id, topic, mastery_score::float, quizzes_evaluated, updated_at
+       FROM user_topic_mastery
+       WHERE user_id = $1
+       ORDER BY mastery_score DESC`,
+      [req.user!.id]
+    );
+
+    const overallAvg = masteryRes.rows.length > 0
+      ? Math.round(masteryRes.rows.reduce((acc, m) => acc + m.mastery_score, 0) / masteryRes.rows.length)
+      : 80;
+
+    const recommendedMode = overallAvg < 50 ? 'beginner' : overallAvg < 80 ? 'intermediate' : 'advanced';
+
+    res.json({
+      user_id: req.user!.id,
+      topics: masteryRes.rows,
+      overall_mastery: overallAvg,
+      recommended_mode: recommendedMode,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /leaderboard/:courseId (Cached TTL 60 sec)
 gamificationRouter.get(['/leaderboard/:courseId', '/:courseId'], authenticateToken, cacheMiddleware(60, 'cache:leaderboard'), async (req: AuthenticatedRequest, res: Response, next) => {
   try {

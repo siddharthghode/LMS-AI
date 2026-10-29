@@ -138,9 +138,13 @@ export const CoursePlayer: React.FC = () => {
   // AI Tutor Drawer
   const [isAiTutorOpen, setIsAiTutorOpen] = useState(false);
 
-  // Video Ref
+  // Video Ref & Playback state (FR-S4)
   const videoRef = useRef<HTMLVideoElement>(null);
   const [currentTime, setCurrentTime] = useState(0);
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
+  const [lectureProgress, setLectureProgress] = useState<Record<string, number>>({});
+  const [resumeNotice, setResumeNotice] = useState<string | null>(null);
+  const lastSyncedSec = useRef<number>(0);
 
   // Load course details
   useEffect(() => {
@@ -155,12 +159,14 @@ export const CoursePlayer: React.FC = () => {
 
       api.get(`/courses/${courseId}/enrollment-status`).then(res => {
         if (res.data.is_enrolled && res.data.enrollment?.lecture_progress) {
-          const completed = new Set<string>(
-            res.data.enrollment.lecture_progress
-              .filter((lp: any) => lp.completed)
-              .map((lp: any) => lp.lecture_id)
-          );
+          const completed = new Set<string>();
+          const progressMap: Record<string, number> = {};
+          res.data.enrollment.lecture_progress.forEach((lp: any) => {
+            if (lp.completed) completed.add(lp.lecture_id);
+            if (lp.watched_seconds) progressMap[lp.lecture_id] = lp.watched_seconds;
+          });
           setCompletedLectureIds(completed);
+          setLectureProgress(progressMap);
         }
       });
 
@@ -179,13 +185,45 @@ export const CoursePlayer: React.FC = () => {
       api.get(`/lectures/${currentLecture.id}/notes`).then(res => setNotes(res.data)).catch(() => {});
       api.get(`/lectures/${currentLecture.id}/bookmarks`).then(res => setBookmarks(res.data)).catch(() => {});
       setAiSummary(null);
+      lastSyncedSec.current = 0;
     }
   }, [currentLecture]);
 
-  // Video time tracking
-  const handleTimeUpdate = () => {
+  // Handle Video Metadata Loaded: Auto-Resume & Set Speed (FR-S4)
+  const handleLoadedMetadata = () => {
+    if (videoRef.current && currentLecture) {
+      videoRef.current.playbackRate = playbackSpeed;
+      const savedSeconds = lectureProgress[currentLecture.id];
+      if (savedSeconds && savedSeconds > 2 && savedSeconds < (currentLecture.duration_seconds || 300) - 5) {
+        videoRef.current.currentTime = savedSeconds;
+        setResumeNotice(`Resumed at ${formatTime(savedSeconds)}`);
+        setTimeout(() => setResumeNotice(null), 4000);
+      }
+    }
+  };
+
+  // Playback speed handler (FR-S4)
+  const handleSpeedChange = (speed: number) => {
+    setPlaybackSpeed(speed);
     if (videoRef.current) {
-      setCurrentTime(Math.floor(videoRef.current.currentTime));
+      videoRef.current.playbackRate = speed;
+    }
+  };
+
+  // Video time tracking with periodic progress persistence
+  const handleTimeUpdate = () => {
+    if (videoRef.current && currentLecture) {
+      const sec = Math.floor(videoRef.current.currentTime);
+      setCurrentTime(sec);
+
+      // Periodically sync watched_seconds to backend every 10 seconds
+      if (Math.abs(sec - lastSyncedSec.current) >= 10) {
+        lastSyncedSec.current = sec;
+        api.post(`/lectures/${currentLecture.id}/progress`, {
+          watched_seconds: sec,
+          completed: completedLectureIds.has(currentLecture.id),
+        }).catch(() => {});
+      }
     }
   };
 
@@ -403,14 +441,21 @@ export const CoursePlayer: React.FC = () => {
         {/* Left Column: Video & Tabs (2 cols) */}
         <div className="lg:col-span-2 space-y-4">
           {/* Video Player */}
-          <div className="relative rounded-2xl bg-black border border-slate-800 overflow-hidden shadow-2xl aspect-video">
+          <div className="relative rounded-2xl bg-black border border-slate-800 overflow-hidden shadow-2xl aspect-video group">
             <video
               ref={videoRef}
               src={currentLecture.video_url}
               controls
+              onLoadedMetadata={handleLoadedMetadata}
               onTimeUpdate={handleTimeUpdate}
               className="w-full h-full object-contain"
             />
+            {resumeNotice && (
+              <div className="absolute top-4 left-4 z-20 px-3 py-1.5 rounded-lg bg-indigo-600/90 text-white text-xs font-semibold backdrop-blur shadow-lg animate-in fade-in flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-indigo-200" />
+                {resumeNotice}
+              </div>
+            )}
           </div>
 
           {/* Action Row Under Video */}
@@ -427,7 +472,26 @@ export const CoursePlayer: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Playback Speed Controller (FR-S4) */}
+              <div className="flex items-center gap-1 bg-slate-900 border border-slate-700/80 rounded-xl px-2 py-1">
+                <span className="text-[10px] uppercase font-bold text-slate-400 mr-1">Speed</span>
+                {[0.5, 0.75, 1, 1.25, 1.5, 2].map((spd) => (
+                  <button
+                    key={spd}
+                    type="button"
+                    onClick={() => handleSpeedChange(spd)}
+                    className={`px-1.5 py-0.5 rounded text-[11px] font-bold transition-all ${
+                      playbackSpeed === spd
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                    }`}
+                  >
+                    {spd}x
+                  </button>
+                ))}
+              </div>
+
               <button
                 onClick={handleAddBookmark}
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition-colors"

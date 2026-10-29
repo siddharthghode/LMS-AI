@@ -261,6 +261,32 @@ quizzesRouter.post(['/attempts/:id/submit', '/:id/submit'], authenticateToken, a
         );
       }
 
+      // Update per-topic mastery score (FR-A8)
+      try {
+        const topicRes = await client.query(
+          `SELECT COALESCE(c.category, 'General') as topic
+           FROM quizzes q
+           JOIN modules m ON q.module_id = m.id
+           JOIN courses c ON m.course_id = c.id
+           WHERE q.id = $1`,
+          [quizId]
+        );
+        const topic = topicRes.rows[0]?.topic || 'General';
+
+        await client.query(
+          `INSERT INTO user_topic_mastery (user_id, topic, mastery_score, quizzes_evaluated, updated_at)
+           VALUES ($1, $2, $3, 1, now())
+           ON CONFLICT (user_id, topic)
+           DO UPDATE SET
+             mastery_score = ROUND(((user_topic_mastery.mastery_score * user_topic_mastery.quizzes_evaluated + EXCLUDED.mastery_score) / (user_topic_mastery.quizzes_evaluated + 1)), 2),
+             quizzes_evaluated = user_topic_mastery.quizzes_evaluated + 1,
+             updated_at = now()`,
+          [userId, topic, score]
+        );
+      } catch (masteryErr: any) {
+        console.warn('Topic mastery update warning:', masteryErr.message);
+      }
+
       await client.query('COMMIT');
 
       res.json({

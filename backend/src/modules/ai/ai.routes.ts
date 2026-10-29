@@ -25,14 +25,61 @@ aiRouter.post('/chat/sessions', authenticateToken, async (req: AuthenticatedRequ
       return;
     }
 
+    let activeMode = mode;
+    if (!req.body.mode) {
+      // Look up topic mastery for dynamic difficulty adjustment (FR-A8)
+      const courseTopicRes = await pool.query(
+        `SELECT c.category FROM courses c WHERE c.id = $1`,
+        [course_id]
+      );
+      if (courseTopicRes.rows.length > 0) {
+        const topic = courseTopicRes.rows[0].category;
+        const masteryRes = await pool.query(
+          `SELECT mastery_score FROM user_topic_mastery WHERE user_id = $1 AND topic = $2`,
+          [userId, topic]
+        );
+        if (masteryRes.rows.length > 0) {
+          const score = parseFloat(masteryRes.rows[0].mastery_score);
+          activeMode = score < 50 ? 'beginner' : score < 80 ? 'intermediate' : 'advanced';
+        }
+      }
+    }
+
     const sessionRes = await pool.query(
       `INSERT INTO ai_chat_sessions (user_id, course_id, mode)
        VALUES ($1, $2, $3)
        RETURNING *`,
-      [userId, course_id, mode]
+      [userId, course_id, activeMode]
     );
 
     res.status(201).json(sessionRes.rows[0]);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /ai/mastery/me - Dynamic student topic mastery and AI adaptation (FR-A8)
+aiRouter.get('/mastery/me', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+  try {
+    const masteryRes = await pool.query(
+      `SELECT id, topic, mastery_score::float, quizzes_evaluated, updated_at
+       FROM user_topic_mastery
+       WHERE user_id = $1
+       ORDER BY mastery_score DESC`,
+      [req.user!.id]
+    );
+
+    const overallAvg = masteryRes.rows.length > 0
+      ? Math.round(masteryRes.rows.reduce((acc, m) => acc + m.mastery_score, 0) / masteryRes.rows.length)
+      : 80;
+
+    const recommendedMode = overallAvg < 50 ? 'beginner' : overallAvg < 80 ? 'intermediate' : 'advanced';
+
+    res.json({
+      topics: masteryRes.rows,
+      overall_mastery: overallAvg,
+      recommended_mode: recommendedMode,
+    });
   } catch (err) {
     next(err);
   }

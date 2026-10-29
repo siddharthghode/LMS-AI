@@ -430,6 +430,16 @@ export async function runSeed() {
       ($1, 'New Announcement', 'Dr. Priya Sharma posted an announcement in Full-Stack AI Engineering.', FALSE);
     `, [studentId]);
 
+    // 17. Topic Mastery (FR-A8)
+    await client.query(`
+      INSERT INTO user_topic_mastery (user_id, topic, mastery_score, quizzes_evaluated) VALUES
+      ($1, 'Vector Search & Embeddings', 92.5, 3),
+      ($1, 'Agentic Workflows', 85.0, 2),
+      ($1, 'Kubernetes & DevOps', 78.0, 2),
+      ($1, 'Full-Stack React', 88.0, 3)
+      ON CONFLICT (user_id, topic) DO NOTHING;
+    `, [studentId]);
+
     await client.query('COMMIT');
     console.log('Seed completed successfully!');
   } catch (err) {

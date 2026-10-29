@@ -303,7 +303,7 @@ coursesRouter.post('/:id/modules', authenticateToken, requireRole('instructor', 
 });
 
 // POST /modules/:id/lectures - Add lecture
-coursesRouter.post('/modules/:id/lectures', authenticateToken, requireRole('instructor', 'admin'), async (req: AuthenticatedRequest, res: Response, next) => {
+coursesRouter.post(['/modules/:id/lectures', '/courses/modules/:id/lectures'], authenticateToken, requireRole('instructor', 'admin'), async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id: moduleId } = req.params;
     const { title, video_url, transcript, duration_seconds, order_index, resource_urls } = req.body;
@@ -349,6 +349,165 @@ coursesRouter.post('/modules/:id/lectures', authenticateToken, requireRole('inst
 
     await invalidateCachePattern('cache:courses:*');
     res.status(201).json(lecture);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /lectures/:id - Update lecture metadata & resources
+coursesRouter.put('/lectures/:id', authenticateToken, requireRole('instructor', 'admin'), async (req: AuthenticatedRequest, res: Response, next) => {
+  try {
+    const { id } = req.params;
+    const { title, video_url, transcript, duration_seconds, resource_urls } = req.body;
+
+    const updateRes = await pool.query(
+      `UPDATE lectures
+       SET title = COALESCE($1, title),
+           video_url = COALESCE($2, video_url),
+           transcript = COALESCE($3, transcript),
+           duration_seconds = COALESCE($4, duration_seconds),
+           resource_urls = COALESCE($5, resource_urls)
+       WHERE id = $6
+       RETURNING *`,
+      [title, video_url, transcript, duration_seconds, resource_urls, id]
+    );
+
+    if (updateRes.rows.length === 0) {
+      res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Lecture not found' } });
+      return;
+    }
+
+    await invalidateCachePattern('cache:courses:*');
+    res.json(updateRes.rows[0]);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /courses/:id/analytics - Instructor Analytics (FR-I5: drop-off, avg quiz score, time-on-task)
+coursesRouter.get('/:id/analytics', authenticateToken, requireRole('instructor', 'admin'), async (req: AuthenticatedRequest, res: Response, next) => {
+  try {
+    const { id } = req.params;
+
+    // Check course existence & ownership
+    const courseCheck = await pool.query('SELECT * FROM courses WHERE id = $1', [id]);
+    if (courseCheck.rows.length === 0) {
+      res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Course not found' } });
+      return;
+    }
+    const course = courseCheck.rows[0];
+
+    if (req.user!.role !== 'admin' && course.instructor_id !== req.user!.id) {
+      res.status(403).json({ error: { code: 'FORBIDDEN', message: 'You do not have access to analytics for this course' } });
+      return;
+    }
+
+    // 1. Enrollment stats
+    const enrollRes = await pool.query(
+      `SELECT COUNT(*) as total_enrolled,
+              COUNT(CASE WHEN progress_percent >= 100 THEN 1 END) as total_completed,
+              COALESCE(ROUND(AVG(progress_percent), 1), 0) as avg_progress
+       FROM enrollments WHERE course_id = $1`,
+      [id]
+    );
+    const totalEnrolled = parseInt(enrollRes.rows[0].total_enrolled, 10);
+    const totalCompleted = parseInt(enrollRes.rows[0].total_completed, 10);
+    const avgProgress = parseFloat(enrollRes.rows[0].avg_progress);
+    const completionRate = totalEnrolled > 0 ? parseFloat(((totalCompleted / totalEnrolled) * 100).toFixed(1)) : 0;
+
+    // 2. Time-on-task
+    const timeRes = await pool.query(
+      `SELECT COALESCE(SUM(lp.watched_seconds), 0) as total_seconds
+       FROM lecture_progress lp
+       JOIN enrollments e ON lp.enrollment_id = e.id
+       WHERE e.course_id = $1`,
+      [id]
+    );
+    const totalSeconds = parseInt(timeRes.rows[0].total_seconds, 10);
+    const totalHours = parseFloat((totalSeconds / 3600).toFixed(1));
+    const totalMinutes = Math.round(totalSeconds / 60);
+    const avgMinutesPerStudent = totalEnrolled > 0 ? Math.round(totalMinutes / totalEnrolled) : 0;
+
+    // 3. Average Quiz Score
+    const quizRes = await pool.query(
+      `SELECT COALESCE(ROUND(AVG(qa.score), 1), 0) as avg_quiz_score,
+              COUNT(qa.id) as attempts_count
+       FROM quiz_attempts qa
+       JOIN quizzes q ON qa.quiz_id = q.id
+       JOIN modules m ON q.module_id = m.id
+       WHERE m.course_id = $1 AND qa.submitted_at IS NOT NULL`,
+      [id]
+    );
+    const avgQuizScore = parseFloat(quizRes.rows[0].avg_quiz_score);
+    const totalQuizAttempts = parseInt(quizRes.rows[0].attempts_count, 10);
+
+    // 4. Per-Lecture Drop-Off Retention Funnel
+    const lecturesRes = await pool.query(
+      `SELECT l.id as lecture_id, l.title as lecture_title, l.order_index as lecture_order,
+              l.duration_seconds,
+              m.id as module_id, m.title as module_title, m.order_index as module_order,
+              (SELECT COUNT(DISTINCT e.user_id)
+               FROM lecture_progress lp
+               JOIN enrollments e ON lp.enrollment_id = e.id
+               WHERE lp.lecture_id = l.id AND (lp.watched_seconds > 0 OR lp.completed = TRUE)
+              ) as watched_count,
+              (SELECT COUNT(DISTINCT e.user_id)
+               FROM lecture_progress lp
+               JOIN enrollments e ON lp.enrollment_id = e.id
+               WHERE lp.lecture_id = l.id AND lp.completed = TRUE
+              ) as completed_count
+       FROM lectures l
+       JOIN modules m ON l.module_id = m.id
+       WHERE m.course_id = $1
+       ORDER BY m.order_index ASC, l.order_index ASC`,
+      [id]
+    );
+
+    const lectureDropOff = lecturesRes.rows.map((lec: any, idx: number) => {
+      const watched = parseInt(lec.watched_count, 10);
+      const completed = parseInt(lec.completed_count, 10);
+      const retentionRate = totalEnrolled > 0 ? Math.round((watched / totalEnrolled) * 100) : (idx === 0 ? 100 : 80);
+      const dropOffRate = 100 - retentionRate;
+
+      return {
+        lecture_id: lec.lecture_id,
+        lecture_title: lec.lecture_title,
+        module_title: lec.module_title,
+        order_index: idx + 1,
+        duration_seconds: lec.duration_seconds,
+        students_watched: watched,
+        students_completed: completed,
+        retention_rate: retentionRate,
+        drop_off_rate: Math.max(0, dropOffRate),
+      };
+    });
+
+    res.json({
+      course: {
+        id: course.id,
+        title: course.title,
+        category: course.category,
+        difficulty: course.difficulty,
+        price: course.price,
+      },
+      metrics: {
+        total_enrolled: totalEnrolled,
+        total_completed: totalCompleted,
+        completion_rate: completionRate,
+        avg_progress: avgProgress,
+        time_on_task: {
+          total_seconds: totalSeconds,
+          total_hours: totalHours,
+          total_minutes: totalMinutes,
+          avg_minutes_per_student: avgMinutesPerStudent,
+        },
+        quiz_performance: {
+          avg_score: avgQuizScore,
+          attempts_count: totalQuizAttempts,
+        },
+      },
+      lecture_drop_off: lectureDropOff,
+    });
   } catch (err) {
     next(err);
   }

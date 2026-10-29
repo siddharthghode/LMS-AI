@@ -46,11 +46,25 @@ interface StreakData {
   last_active_date?: string;
 }
 
+interface TopicMasteryItem {
+  id: string;
+  topic: string;
+  mastery_score: number;
+  quizzes_evaluated: number;
+}
+
+interface MasteryData {
+  topics: TopicMasteryItem[];
+  overall_mastery: number;
+  recommended_mode: 'beginner' | 'intermediate' | 'advanced';
+}
+
 export const StudentDashboard: React.FC = () => {
   const { user } = useAuth();
   const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [streak, setStreak] = useState<StreakData | null>(null);
+  const [masteryData, setMasteryData] = useState<MasteryData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -61,12 +75,16 @@ export const StudentDashboard: React.FC = () => {
       api.get('/enrollments/me'),
       api.get('/recommendations/me'),
       api.get('/users/me/streak').catch(() => ({ data: null })),
+      api.get('/gamification/mastery/me').catch(() => ({ data: null })),
     ])
-      .then(([enrollRes, recRes, streakRes]) => {
+      .then(([enrollRes, recRes, streakRes, masteryRes]) => {
         setEnrollments(enrollRes.data || []);
         setRecommendations(recRes.data || []);
         if (streakRes?.data) {
           setStreak(streakRes.data);
+        }
+        if (masteryRes?.data) {
+          setMasteryData(masteryRes.data);
         }
       })
       .catch(err => {
@@ -206,6 +224,91 @@ export const StudentDashboard: React.FC = () => {
           </Link>
         </div>
       </div>
+
+      {/* Adaptive Topic Mastery Section (FR-A8) */}
+      {masteryData && (
+        <div className="p-6 rounded-3xl bg-slate-800/40 border border-slate-800 space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-indigo-500/10 flex items-center justify-center text-indigo-400">
+                <BrainCircuit className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Adaptive Topic Mastery (FR-A8)</h3>
+                <p className="text-xs text-slate-400">
+                  Real-time knowledge tracking based on quiz submissions & learning progression
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400">AI Tutor Mode:</span>
+              <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
+                masteryData.recommended_mode === 'advanced'
+                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                  : masteryData.recommended_mode === 'intermediate'
+                  ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                  : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+              }`}>
+                {masteryData.recommended_mode} Explanations
+              </span>
+            </div>
+          </div>
+
+          {/* Overall Mastery Meter */}
+          <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div className="text-xs text-slate-400 font-medium">Overall Curriculum Mastery Index</div>
+              <div className="text-2xl font-black text-white mt-0.5">
+                {masteryData.overall_mastery}%
+                <span className="text-xs text-emerald-400 font-semibold ml-2">
+                  {masteryData.overall_mastery >= 85 ? 'Exceeding Mastery' : masteryData.overall_mastery >= 70 ? 'Proficient' : 'Developing'}
+                </span>
+              </div>
+            </div>
+            <div className="w-full sm:w-64 h-3 bg-slate-800 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-400 rounded-full transition-all duration-500"
+                style={{ width: `${Math.max(5, Math.min(100, masteryData.overall_mastery))}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Per-Topic Breakdown Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {masteryData.topics?.map(topic => (
+              <div
+                key={topic.id}
+                className="p-3.5 rounded-2xl bg-slate-900/40 border border-slate-800/80 space-y-2 hover:border-slate-700 transition-colors"
+              >
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-slate-200 truncate">{topic.topic}</span>
+                  <span className={`font-black ${
+                    topic.mastery_score >= 80 ? 'text-emerald-400' : topic.mastery_score >= 60 ? 'text-indigo-400' : 'text-amber-400'
+                  }`}>
+                    {Math.round(topic.mastery_score)}%
+                  </span>
+                </div>
+                <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      topic.mastery_score >= 80
+                        ? 'bg-emerald-400'
+                        : topic.mastery_score >= 60
+                        ? 'bg-indigo-400'
+                        : 'bg-amber-400'
+                    }`}
+                    style={{ width: `${Math.max(5, Math.min(100, topic.mastery_score))}%` }}
+                  />
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  {topic.quizzes_evaluated} evaluation{topic.quizzes_evaluated === 1 ? '' : 's'} recorded
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Enrolled Courses Section */}
       <div>

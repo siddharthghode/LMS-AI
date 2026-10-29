@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../services/api';
 import {
@@ -9,18 +9,38 @@ import {
   Award,
   ChevronLeft,
   Sparkles,
-  Send
+  Send,
+  FileArchive,
+  FileCode,
+  X,
+  ExternalLink,
+  Download,
+  AlertCircle
 } from 'lucide-react';
+
+interface UploadedFileMeta {
+  original_name: string;
+  size: number;
+  url: string;
+}
 
 export const AssignmentView: React.FC = () => {
   const { assignmentId } = useParams<{ assignmentId: string }>();
   const navigate = useNavigate();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [assignment, setAssignment] = useState<any>(null);
   const [textSubmission, setTextSubmission] = useState('');
   const [fileUrl, setFileUrl] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [existingSubmission, setExistingSubmission] = useState<any>(null);
   const [message, setMessage] = useState('');
+
+  // File upload state (FR-S6)
+  const [isUploading, setIsUploading] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploadedFile, setUploadedFile] = useState<UploadedFileMeta | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (assignmentId) {
@@ -44,6 +64,76 @@ export const AssignmentView: React.FC = () => {
         });
     }
   }, [assignmentId]);
+
+  const handleFileUpload = async (file: File) => {
+    if (!file) return;
+    setIsUploading(true);
+    setUploadError(null);
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await api.post('/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      const uploaded: UploadedFileMeta = {
+        original_name: res.data.original_name || file.name,
+        size: res.data.size || file.size,
+        url: res.data.url,
+      };
+
+      setUploadedFile(uploaded);
+      setFileUrl(uploaded.url);
+    } catch (err: any) {
+      console.error('File upload failed:', err);
+      setUploadError(err.response?.data?.error?.message || 'Failed to upload file. Please try again.');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleFileUpload(e.dataTransfer.files[0]);
+    }
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      handleFileUpload(e.target.files[0]);
+    }
+  };
+
+  const handleRemoveFile = () => {
+    setUploadedFile(null);
+    setFileUrl('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (!bytes) return '0 B';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -113,7 +203,7 @@ export const AssignmentView: React.FC = () => {
 
       {/* Existing Submission or Feedback */}
       {existingSubmission && (
-        <div className="p-6 rounded-2xl bg-emerald-950/30 border border-emerald-500/30 space-y-3">
+        <div className="p-6 rounded-2xl bg-emerald-950/30 border border-emerald-500/30 space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
               <CheckCircle className="w-5 h-5" /> Submission Received
@@ -123,9 +213,28 @@ export const AssignmentView: React.FC = () => {
             </span>
           </div>
 
-          <div className="text-xs text-slate-300 bg-slate-900/80 p-3 rounded-xl border border-slate-800">
-            {existingSubmission.text_submission || 'File attachment submitted.'}
-          </div>
+          {existingSubmission.text_submission && (
+            <div className="text-xs text-slate-300 bg-slate-900/80 p-3 rounded-xl border border-slate-800 font-mono whitespace-pre-wrap">
+              {existingSubmission.text_submission}
+            </div>
+          )}
+
+          {existingSubmission.file_url && (
+            <div className="flex items-center justify-between p-3 rounded-xl bg-slate-900/90 border border-slate-800 text-xs">
+              <div className="flex items-center gap-2 text-slate-200 truncate">
+                <FileArchive className="w-4 h-4 text-indigo-400 shrink-0" />
+                <span className="truncate">Attached File Submission</span>
+              </div>
+              <a
+                href={existingSubmission.file_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 font-semibold border border-indigo-500/30 transition-colors"
+              >
+                <Download className="w-3.5 h-3.5" /> View / Download
+              </a>
+            </div>
+          )}
 
           {existingSubmission.grade != null ? (
             <div className="p-4 rounded-xl bg-slate-900 border border-emerald-500/40">
@@ -147,7 +256,7 @@ export const AssignmentView: React.FC = () => {
 
       {/* Submission Form */}
       {!existingSubmission && (
-        <form onSubmit={handleSubmit} className="p-6 rounded-2xl bg-slate-800/40 border border-slate-800 space-y-4">
+        <form onSubmit={handleSubmit} className="p-6 rounded-2xl bg-slate-800/40 border border-slate-800 space-y-5">
           <h3 className="text-sm font-bold text-white">Your Submission</h3>
 
           <div>
@@ -155,7 +264,7 @@ export const AssignmentView: React.FC = () => {
               Code or Written Implementation:
             </label>
             <textarea
-              rows={8}
+              rows={6}
               value={textSubmission}
               onChange={(e) => setTextSubmission(e.target.value)}
               placeholder="Paste your implementation script, architecture explanation, or response here..."
@@ -163,9 +272,87 @@ export const AssignmentView: React.FC = () => {
             />
           </div>
 
+          {/* File Upload Dropzone (FR-S6) */}
           <div>
             <label className="block text-xs font-medium text-slate-400 mb-1.5">
-              External Link or File URL (Optional):
+              Assignment File Upload (.pdf, .zip, .py, .ts, .js, .docx):
+            </label>
+
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileSelect}
+              accept=".pdf,.zip,.tar.gz,.py,.ts,.js,.tsx,.jsx,.txt,.docx,.md"
+              className="hidden"
+            />
+
+            {!uploadedFile ? (
+              <div
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all ${
+                  isDragging
+                    ? 'border-indigo-400 bg-indigo-500/10 scale-[1.01]'
+                    : 'border-slate-700 hover:border-slate-600 bg-slate-900/40 hover:bg-slate-900/60'
+                }`}
+              >
+                <div className="w-12 h-12 rounded-xl bg-indigo-500/10 flex items-center justify-center mx-auto text-indigo-400 mb-3">
+                  <Upload className={`w-6 h-6 ${isUploading ? 'animate-bounce' : ''}`} />
+                </div>
+                <div className="text-xs font-semibold text-white mb-1">
+                  {isUploading ? 'Uploading file to server...' : 'Click or drag & drop files here'}
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Supports PDF reports, project ZIP archives, or source code files (up to 50MB)
+                </p>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-900 border border-slate-700">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-9 h-9 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400 shrink-0">
+                    <CheckCircle className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-white truncate">{uploadedFile.original_name}</div>
+                    <div className="text-[11px] text-slate-400">{formatFileSize(uploadedFile.size)}</div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <a
+                    href={uploadedFile.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                    title="Preview uploaded file"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                  </a>
+                  <button
+                    type="button"
+                    onClick={handleRemoveFile}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-slate-800 transition-colors"
+                    title="Remove file"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {uploadError && (
+              <div className="mt-2 text-xs text-red-400 flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5" />
+                <span>{uploadError}</span>
+              </div>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-400 mb-1.5">
+              Or External Repository / Artifact URL (Optional):
             </label>
             <input
               type="text"
@@ -185,8 +372,8 @@ export const AssignmentView: React.FC = () => {
           <div className="flex justify-end">
             <button
               type="submit"
-              disabled={isSubmitting || (!textSubmission.trim() && !fileUrl.trim())}
-              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold shadow-md shadow-indigo-600/30 transition-all"
+              disabled={isSubmitting || isUploading || (!textSubmission.trim() && !fileUrl.trim())}
+              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold shadow-md shadow-indigo-600/30 transition-all hover:scale-105"
             >
               <Send className="w-4 h-4" />
               {isSubmitting ? 'Submitting...' : 'Submit Assignment'}

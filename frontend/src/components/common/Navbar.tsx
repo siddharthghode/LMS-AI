@@ -10,9 +10,19 @@ import {
   Shield,
   GraduationCap,
   BookOpen,
-  ChevronDown
+  ChevronDown,
+  Sun,
+  Moon,
+  Globe
 } from 'lucide-react';
 import { api } from '../../services/api';
+
+const LANGUAGES = [
+  { code: 'en', label: 'English', flag: '🇺🇸' },
+  { code: 'es', label: 'Español', flag: '🇪🇸' },
+  { code: 'hi', label: 'हिन्दी', flag: '🇮🇳' },
+  { code: 'fr', label: 'Français', flag: '🇫🇷' },
+];
 
 export const Navbar: React.FC = () => {
   const { user, logout, quickSwitch } = useAuth();
@@ -20,6 +30,17 @@ export const Navbar: React.FC = () => {
   const [unreadCount, setUnreadCount] = useState(0);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showRoleMenu, setShowRoleMenu] = useState(false);
+  const [showLangMenu, setShowLangMenu] = useState(false);
+
+  // Theme Toggle State
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    return (localStorage.getItem('theme') as 'dark' | 'light') || 'dark';
+  });
+
+  // Language state scaffold
+  const [language, setLanguage] = useState<string>(() => {
+    return localStorage.getItem('lang') || 'en';
+  });
 
   useEffect(() => {
     if (user) {
@@ -29,6 +50,23 @@ export const Navbar: React.FC = () => {
     }
   }, [user]);
 
+  const toggleTheme = () => {
+    const nextTheme = theme === 'dark' ? 'light' : 'dark';
+    setTheme(nextTheme);
+    localStorage.setItem('theme', nextTheme);
+    if (nextTheme === 'light') {
+      document.documentElement.classList.add('light');
+    } else {
+      document.documentElement.classList.remove('light');
+    }
+  };
+
+  const handleSelectLanguage = (langCode: string) => {
+    setLanguage(langCode);
+    localStorage.setItem('lang', langCode);
+    setShowLangMenu(false);
+  };
+
   const handleRoleSwitch = async (role: 'student' | 'instructor' | 'admin') => {
     setShowRoleMenu(false);
     await quickSwitch(role);
@@ -36,6 +74,8 @@ export const Navbar: React.FC = () => {
     else if (role === 'instructor') navigate('/instructor');
     else navigate('/dashboard');
   };
+
+  const currentLangObj = LANGUAGES.find(l => l.code === language) || LANGUAGES[0];
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-800 bg-slate-900/90 backdrop-blur-md">
@@ -144,6 +184,53 @@ export const Navbar: React.FC = () => {
                   <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-indigo-500 ring-2 ring-slate-900" />
                 )}
               </Link>
+
+              {/* Language Selector Scaffold */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowLangMenu(!showLangMenu)}
+                  className="p-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors flex items-center gap-1 text-xs"
+                  title="Switch Language"
+                >
+                  <Globe className="w-4 h-4 text-slate-400" />
+                  <span className="hidden sm:inline text-[11px] font-semibold">{currentLangObj.flag}</span>
+                </button>
+
+                {showLangMenu && (
+                  <div className="absolute right-0 mt-2 w-36 rounded-xl bg-slate-800 border border-slate-700 shadow-2xl p-1 z-50 animate-in fade-in zoom-in-95">
+                    {LANGUAGES.map(lang => (
+                      <button
+                        key={lang.code}
+                        type="button"
+                        onClick={() => handleSelectLanguage(lang.code)}
+                        className={`w-full flex items-center justify-between px-2.5 py-1.5 text-xs rounded-lg text-left transition-colors ${
+                          language === lang.code ? 'bg-indigo-600/20 text-indigo-300 font-bold' : 'text-slate-300 hover:bg-slate-700/60'
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span>{lang.flag}</span>
+                          <span>{lang.label}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Dark / Light Theme Toggle */}
+              <button
+                type="button"
+                onClick={toggleTheme}
+                className="p-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+                title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}
+              >
+                {theme === 'dark' ? (
+                  <Sun className="w-4 h-4 text-amber-400" />
+                ) : (
+                  <Moon className="w-4 h-4 text-indigo-400" />
+                )}
+              </button>
 
               {/* Profile Avatar / Menu */}
               <div className="relative">
