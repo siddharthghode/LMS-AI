@@ -1,10 +1,12 @@
 import request from 'supertest';
 import { app } from '../src/server';
+import { invalidateCachePattern } from '../src/utils/cache';
 
 describe('Course Catalog Filters & Student Dashboard Integration Tests', () => {
   let studentToken = '';
 
   beforeAll(async () => {
+    await invalidateCachePattern('cache:courses:*');
     const studentRes = await request(app)
       .post('/api/v1/auth/login')
       .send({ email: 'student@lms.local', password: 'Password123!' });

@@ -347,6 +347,35 @@ export async function runSeed() {
       ($1, 'To force the LLM to output responses faster', FALSE);
     `, [q2Id]);
 
+    // Question 3: Multi-select
+    const q3Res = await client.query(`
+      INSERT INTO quiz_questions (quiz_id, question_text, question_type, order_index)
+      VALUES ($1, 'Select all valid vector distance metrics supported in pgvector:', 'multi_select', 3)
+      RETURNING id;
+    `, [quizId]);
+    const q3Id = q3Res.rows[0].id;
+
+    await client.query(`
+      INSERT INTO quiz_options (question_id, option_text, is_correct) VALUES
+      ($1, 'Cosine distance (<=>)', TRUE),
+      ($1, 'L2 distance / Euclidean (<->)', TRUE),
+      ($1, 'Inner product (<#>)', TRUE),
+      ($1, 'MD5 hash distance', FALSE);
+    `, [q3Id]);
+
+    // Question 4: Short answer
+    const q4Res = await client.query(`
+      INSERT INTO quiz_questions (quiz_id, question_text, question_type, order_index)
+      VALUES ($1, 'Name the open-source PostgreSQL extension used for high-dimensional vector similarity search:', 'short_answer', 4)
+      RETURNING id;
+    `, [quizId]);
+    const q4Id = q4Res.rows[0].id;
+
+    await client.query(`
+      INSERT INTO quiz_options (question_id, option_text, is_correct) VALUES
+      ($1, 'pgvector', TRUE);
+    `, [q4Id]);
+
     // 12. Assignments
     await client.query(`
       INSERT INTO assignments (course_id, title, instructions, rubric, due_date)
