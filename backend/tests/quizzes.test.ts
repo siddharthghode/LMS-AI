@@ -21,7 +21,8 @@ describe('Quiz Evaluation & Multi-Type Grading Engine Tests', () => {
     const courseRes = await request(app)
       .get('/api/v1/courses')
       .set('Authorization', `Bearer ${instToken}`);
-    const courseId = courseRes.body.data[0].id;
+    const course = courseRes.body.data.find((c: any) => c.title.includes('Full-Stack AI')) || courseRes.body.data[0];
+    const courseId = course.id;
 
     const quizListRes = await request(app)
       .get(`/api/v1/quizzes/courses/${courseId}/quizzes`)

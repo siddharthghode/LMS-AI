@@ -82,7 +82,7 @@ export async function runSeed() {
     // 7. Courses
     // Course 1: Approved
     const courseRes = await client.query(`
-      INSERT INTO courses (instructor_id, title, description, category, difficulty, thumbnail_url, price, status)
+      INSERT INTO courses (instructor_id, title, description, category, difficulty, thumbnail_url, price, status, rating, ratings_count)
       VALUES (
         $1,
         'Full-Stack AI Engineering: From RAG to Autonomous Agents',
@@ -91,15 +91,18 @@ export async function runSeed() {
         'intermediate',
         'https://images.unsplash.com/photo-1677442136019-21780efad99a?auto=format&fit=crop&w=800&q=80',
         49.99,
-        'approved'
+        'approved',
+        4.9,
+        128
       )
+      ON CONFLICT DO NOTHING
       RETURNING id;
     `, [instructorId]);
-    const courseId = courseRes.rows[0].id;
+    const courseId = courseRes.rows.length > 0 ? courseRes.rows[0].id : (await client.query('SELECT id FROM courses LIMIT 1')).rows[0].id;
 
-    // Course 2: Pending Admin Approval
+    // Course 2: Advanced Kubernetes (Approved)
     await client.query(`
-      INSERT INTO courses (instructor_id, title, description, category, difficulty, thumbnail_url, price, status)
+      INSERT INTO courses (instructor_id, title, description, category, difficulty, thumbnail_url, price, status, rating, ratings_count)
       VALUES (
         $1,
         'Advanced Kubernetes & Cloud-Native Microservices',
@@ -108,8 +111,101 @@ export async function runSeed() {
         'advanced',
         'https://images.unsplash.com/photo-1667372393119-3d4c48d07fc9?auto=format&fit=crop&w=800&q=80',
         79.99,
-        'pending'
-      );
+        'approved',
+        4.8,
+        94
+      )
+      ON CONFLICT DO NOTHING;
+    `, [instructorId]);
+
+    // Course 3: Generative AI & Prompt Engineering (Approved, Beginner)
+    await client.query(`
+      INSERT INTO courses (instructor_id, title, description, category, difficulty, thumbnail_url, price, status, rating, ratings_count)
+      VALUES (
+        $1,
+        'Generative AI & Prompt Engineering Masterclass',
+        'Learn prompt engineering, few-shot conditioning, structured JSON outputs, function calling, and embedding pipelines with modern LLMs.',
+        'Artificial Intelligence',
+        'beginner',
+        'https://images.unsplash.com/photo-1620712943543-bcc4688e7485?auto=format&fit=crop&w=800&q=80',
+        29.99,
+        'approved',
+        4.7,
+        210
+      )
+      ON CONFLICT DO NOTHING;
+    `, [instructorId]);
+
+    // Course 4: Modern Web Development (Approved, Beginner)
+    await client.query(`
+      INSERT INTO courses (instructor_id, title, description, category, difficulty, thumbnail_url, price, status, rating, ratings_count)
+      VALUES (
+        $1,
+        'Full-Stack Web Development with React 19 & Next.js',
+        'Build production web applications with React Server Components, TypeScript, Tailwind CSS, API routes, and modern authentication.',
+        'Web Development',
+        'beginner',
+        'https://images.unsplash.com/photo-1633356122544-f134324a6cee?auto=format&fit=crop&w=800&q=80',
+        39.99,
+        'approved',
+        4.5,
+        175
+      )
+      ON CONFLICT DO NOTHING;
+    `, [instructorId]);
+
+    // Course 5: Production Docker & CI/CD (Approved, Intermediate)
+    await client.query(`
+      INSERT INTO courses (instructor_id, title, description, category, difficulty, thumbnail_url, price, status, rating, ratings_count)
+      VALUES (
+        $1,
+        'Production Docker & CI/CD with GitHub Actions',
+        'Automate testing, build multi-stage Docker containers, optimize layer caching, and manage zero-downtime deployment pipelines.',
+        'DevOps & Cloud',
+        'intermediate',
+        'https://images.unsplash.com/photo-1607799279861-4dd421887fb3?auto=format&fit=crop&w=800&q=80',
+        44.99,
+        'approved',
+        4.4,
+        88
+      )
+      ON CONFLICT DO NOTHING;
+    `, [instructorId]);
+
+    // Course 6: Data Engineering with Kafka & Spark (Approved, Intermediate)
+    await client.query(`
+      INSERT INTO courses (instructor_id, title, description, category, difficulty, thumbnail_url, price, status, rating, ratings_count)
+      VALUES (
+        $1,
+        'Data Engineering with Apache Kafka & Spark',
+        'Architect high-throughput event-driven data streaming pipelines, partitioning strategies, schema registries, and real-time analytical transformations.',
+        'Data Science',
+        'intermediate',
+        'https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=800&q=80',
+        59.99,
+        'approved',
+        4.6,
+        145
+      )
+      ON CONFLICT DO NOTHING;
+    `, [instructorId]);
+
+    // Course 7: Cybersecurity Fundamentals (Approved, Beginner)
+    await client.query(`
+      INSERT INTO courses (instructor_id, title, description, category, difficulty, thumbnail_url, price, status, rating, ratings_count)
+      VALUES (
+        $1,
+        'Practical Cybersecurity & Network Defense',
+        'Fundamental defensive security operations, threat modeling, web vulnerabilities, encryption standards, and incident response fundamentals.',
+        'Cybersecurity',
+        'beginner',
+        'https://images.unsplash.com/photo-1563986768609-322da13575f3?auto=format&fit=crop&w=800&q=80',
+        34.99,
+        'approved',
+        4.2,
+        62
+      )
+      ON CONFLICT DO NOTHING;
     `, [instructorId]);
 
     // 8. Modules for Course 1

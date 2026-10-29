@@ -11,7 +11,7 @@ export const coursesRouter = Router();
 // GET /courses - Public catalog (Cached TTL 5 min)
 coursesRouter.get('/', cacheMiddleware(300, 'cache:courses:list'), async (req: Request, res: Response, next) => {
   try {
-    const { category, difficulty, q, page = '1', limit = '12', status } = req.query;
+    const { category, difficulty, rating, min_rating, q, page = '1', limit = '12', status } = req.query;
     const pageNum = Math.max(1, parseInt(page as string, 10));
     const limitNum = Math.min(50, Math.max(1, parseInt(limit as string, 10)));
     const offset = (pageNum - 1) * limitNum;
@@ -28,19 +28,28 @@ coursesRouter.get('/', cacheMiddleware(300, 'cache:courses:list'), async (req: R
       conditions.push(`c.status = 'approved'`);
     }
 
-    if (category) {
+    if (category && category !== 'All') {
       conditions.push(`c.category ILIKE $${idx++}`);
       params.push(`%${category}%`);
     }
 
-    if (difficulty) {
+    if (difficulty && difficulty !== 'All') {
       conditions.push(`c.difficulty = $${idx++}`);
       params.push(difficulty);
     }
 
-    if (q) {
-      conditions.push(`(c.title ILIKE $${idx} OR c.description ILIKE $${idx})`);
-      params.push(`%${q}%`);
+    const targetRating = rating || min_rating;
+    if (targetRating && targetRating !== 'All') {
+      const parsedRating = parseFloat(targetRating as string);
+      if (!isNaN(parsedRating)) {
+        conditions.push(`c.rating >= $${idx++}`);
+        params.push(parsedRating);
+      }
+    }
+
+    if (q && (q as string).trim()) {
+      conditions.push(`(c.title ILIKE $${idx} OR c.description ILIKE $${idx} OR c.category ILIKE $${idx})`);
+      params.push(`%${(q as string).trim()}%`);
       idx++;
     }
 
@@ -53,6 +62,8 @@ coursesRouter.get('/', cacheMiddleware(300, 'cache:courses:list'), async (req: R
     const listQuery = `
       SELECT c.id, c.title, c.description, c.category, c.difficulty, c.thumbnail_url,
              c.price, c.status, c.created_at,
+             COALESCE(c.rating, 4.8)::float as rating,
+             COALESCE(c.ratings_count, 0) as ratings_count,
              u.id as instructor_id, u.full_name as instructor_name, u.avatar_url as instructor_avatar,
              (SELECT COUNT(*) FROM modules m WHERE m.course_id = c.id) as modules_count,
              (SELECT COUNT(*) FROM lectures l JOIN modules m ON l.module_id = m.id WHERE m.course_id = c.id) as lectures_count,
@@ -75,6 +86,18 @@ coursesRouter.get('/', cacheMiddleware(300, 'cache:courses:list'), async (req: R
         total_pages: Math.ceil(total / limitNum),
       },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /courses/categories - Distinct categories of approved courses
+coursesRouter.get('/categories', async (req: Request, res: Response, next) => {
+  try {
+    const catsRes = await pool.query(
+      `SELECT DISTINCT category FROM courses WHERE status = 'approved' AND category IS NOT NULL AND TRIM(category) != '' ORDER BY category ASC`
+    );
+    res.json(catsRes.rows.map(r => r.category));
   } catch (err) {
     next(err);
   }
@@ -140,6 +163,7 @@ const createCourseSchema = z.object({
   difficulty: z.enum(['beginner', 'intermediate', 'advanced']).optional().default('beginner'),
   thumbnail_url: z.string().optional(),
   price: z.number().optional().default(0),
+  rating: z.number().optional().default(4.8),
 });
 
 coursesRouter.post('/', authenticateToken, requireRole('instructor', 'admin'), async (req: AuthenticatedRequest, res: Response, next) => {
@@ -150,8 +174,8 @@ coursesRouter.post('/', authenticateToken, requireRole('instructor', 'admin'), a
     const status = req.user!.role === 'admin' ? 'approved' : 'pending';
 
     const insertRes = await pool.query(
-      `INSERT INTO courses (instructor_id, title, description, category, difficulty, thumbnail_url, price, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO courses (instructor_id, title, description, category, difficulty, thumbnail_url, price, status, rating, ratings_count)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING *`,
       [
         req.user!.id,
@@ -162,6 +186,8 @@ coursesRouter.post('/', authenticateToken, requireRole('instructor', 'admin'), a
         data.thumbnail_url || 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=800&q=80',
         data.price,
         status,
+        data.rating,
+        0,
       ]
     );
 

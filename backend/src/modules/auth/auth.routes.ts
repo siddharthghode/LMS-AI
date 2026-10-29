@@ -106,6 +106,11 @@ authRouter.post('/register', authRateLimiter, async (req: Request, res: Response
           full_name: user.full_name,
           email: user.email,
           role: data.role,
+          streak: {
+            current: 1,
+            longest: 1,
+          },
+          badges: [],
         },
       });
     } catch (dbErr) {
@@ -192,6 +197,21 @@ authRouter.post('/login', authRateLimiter, async (req: Request, res: Response, n
       fullName: user.full_name,
     });
 
+    const streakRes = await pool.query(
+      `SELECT current_streak, longest_streak FROM streaks WHERE user_id = $1`,
+      [user.id]
+    );
+    const streak = streakRes.rows[0] || { current_streak: 1, longest_streak: 1 };
+
+    const badgesRes = await pool.query(
+      `SELECT b.id, b.name, b.description, b.icon_url, ub.earned_at
+       FROM user_badges ub
+       JOIN badges b ON ub.badge_id = b.id
+       WHERE ub.user_id = $1
+       ORDER BY ub.earned_at DESC`,
+      [user.id]
+    );
+
     res.json({
       access_token: tokens.accessToken,
       refresh_token: tokens.refreshToken,
@@ -201,6 +221,11 @@ authRouter.post('/login', authRateLimiter, async (req: Request, res: Response, n
         email: user.email,
         role: user.role,
         avatar_url: user.avatar_url,
+        streak: {
+          current: streak.current_streak,
+          longest: streak.longest_streak,
+        },
+        badges: badgesRes.rows,
       },
     });
   } catch (err) {

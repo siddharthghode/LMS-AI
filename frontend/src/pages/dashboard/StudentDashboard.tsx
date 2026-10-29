@@ -40,10 +40,17 @@ interface Recommendation {
   reason: string;
 }
 
+interface StreakData {
+  current_streak: number;
+  longest_streak: number;
+  last_active_date?: string;
+}
+
 export const StudentDashboard: React.FC = () => {
   const { user } = useAuth();
   const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
+  const [streak, setStreak] = useState<StreakData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,10 +60,14 @@ export const StudentDashboard: React.FC = () => {
     Promise.all([
       api.get('/enrollments/me'),
       api.get('/recommendations/me'),
+      api.get('/users/me/streak').catch(() => ({ data: null })),
     ])
-      .then(([enrollRes, recRes]) => {
+      .then(([enrollRes, recRes, streakRes]) => {
         setEnrollments(enrollRes.data || []);
         setRecommendations(recRes.data || []);
+        if (streakRes?.data) {
+          setStreak(streakRes.data);
+        }
       })
       .catch(err => {
         console.error('Dashboard load error:', err);
@@ -68,6 +79,9 @@ export const StudentDashboard: React.FC = () => {
   useEffect(() => {
     fetchDashboardData();
   }, []);
+
+  const currentStreak = streak?.current_streak ?? user?.streak?.current ?? 0;
+  const longestStreak = streak?.longest_streak ?? user?.streak?.longest ?? 0;
 
   const avgProgress = enrollments.length > 0
     ? Math.round(enrollments.reduce((acc, curr) => acc + Number(curr.progress_percent), 0) / enrollments.length)
@@ -130,13 +144,21 @@ export const StudentDashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="p-5 rounded-2xl bg-slate-800/40 border border-slate-800 flex items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-amber-500/10 flex items-center justify-center">
-            <Flame className="w-6 h-6 text-amber-400" />
+        <div className="p-5 rounded-2xl bg-slate-800/40 border border-slate-800 flex items-center gap-4 hover:border-amber-500/30 transition-all">
+          <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
+            <Flame className="w-6 h-6 text-amber-400 fill-amber-400/20" />
           </div>
           <div>
-            <div className="text-2xl font-black text-white">{user?.streak?.current || 1} Days</div>
-            <div className="text-xs text-slate-400 font-medium">Daily Streak</div>
+            <div className="text-2xl font-black text-white flex items-center gap-2">
+              <span>{currentStreak} Days</span>
+              {currentStreak > 0 && (
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+              )}
+            </div>
+            <div className="text-xs text-slate-400 font-medium">Daily Streak Counter</div>
+            <div className="text-[10px] text-amber-400/80 font-semibold mt-0.5">
+              Personal Best: {longestStreak} days
+            </div>
           </div>
         </div>
 
@@ -148,6 +170,40 @@ export const StudentDashboard: React.FC = () => {
             <div className="text-2xl font-black text-white">{user?.badges?.length || 2}</div>
             <div className="text-xs text-slate-400 font-medium">Badges Earned</div>
           </div>
+        </div>
+      </div>
+
+      {/* Daily Streak Highlight Banner */}
+      <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-amber-500/10 via-orange-500/5 to-slate-900 border border-amber-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-lg">
+        <div className="flex items-center gap-3.5">
+          <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center shadow-lg shadow-amber-500/20 shrink-0">
+            <Flame className="w-6 h-6 text-white fill-white" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-bold text-white">Daily Learning Streak: {currentStreak} {currentStreak === 1 ? 'Day' : 'Days'}</h3>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-400/20 text-amber-300 border border-amber-400/30">
+                {currentStreak >= 7 ? 'Legendary 🔥' : currentStreak >= 3 ? 'On Fire ⚡' : 'Active 🚀'}
+              </span>
+            </div>
+            <p className="text-xs text-slate-300 mt-0.5">
+              {currentStreak > 0
+                ? `You're actively on a ${currentStreak}-day learning streak! Learn daily to keep your momentum going.`
+                : 'Start your learning streak today by watching a lecture or completing a quiz!'}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 shrink-0 self-end sm:self-center">
+          <div className="text-right">
+            <div className="text-[11px] text-slate-400">Personal Best</div>
+            <div className="text-xs font-bold text-amber-300">{longestStreak} Days Record</div>
+          </div>
+          <Link
+            to="/achievements"
+            className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-xs font-semibold transition-colors"
+          >
+            View Badges
+          </Link>
         </div>
       </div>
 
@@ -236,14 +292,25 @@ export const StudentDashboard: React.FC = () => {
                     {/* Progress Bar */}
                     <div className="mb-4">
                       <div className="flex items-center justify-between text-xs font-medium mb-1.5">
-                        <span className="text-slate-400">Progress</span>
-                        <span className="text-emerald-400 font-bold">{item.progress_percent}%</span>
+                        <span className="text-slate-400">Course Progress</span>
+                        <span className="text-emerald-400 font-bold">{Math.round(Number(item.progress_percent))}%</span>
                       </div>
-                      <div className="w-full h-2 rounded-full bg-slate-700 overflow-hidden">
+                      <div className="w-full h-2 rounded-full bg-slate-700/80 overflow-hidden">
                         <div
                           className="h-full bg-gradient-to-r from-indigo-500 to-emerald-400 rounded-full transition-all duration-500"
-                          style={{ width: `${item.progress_percent}%` }}
+                          style={{ width: `${Math.min(100, Math.max(0, Number(item.progress_percent)))}%` }}
                         />
+                      </div>
+                      <div className="flex items-center justify-between text-[11px] text-slate-400 mt-2">
+                        <span>
+                          {item.completed_lectures || 0} of {item.total_lectures || 0} lectures completed
+                        </span>
+                        {Number(item.progress_percent) >= 100 && (
+                          <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                            Completed
+                          </span>
+                        )}
                       </div>
                     </div>
 
