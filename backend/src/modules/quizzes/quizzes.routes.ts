@@ -5,7 +5,7 @@ import { authenticateToken, requireRole, AuthenticatedRequest } from '../../midd
 export const quizzesRouter = Router();
 
 // GET /courses/:id/quizzes
-quizzesRouter.get('/courses/:id/quizzes', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+quizzesRouter.get(['/courses/:id/quizzes', '/:id/quizzes'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id: courseId } = req.params;
 
@@ -26,7 +26,7 @@ quizzesRouter.get('/courses/:id/quizzes', authenticateToken, async (req: Authent
 });
 
 // GET /quizzes/:id
-quizzesRouter.get('/quizzes/:id', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+quizzesRouter.get(['/quizzes/:id', '/:id'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id } = req.params;
     const isInstructorOrAdmin = ['instructor', 'admin'].includes(req.user!.role);
@@ -69,7 +69,7 @@ quizzesRouter.get('/quizzes/:id', authenticateToken, async (req: AuthenticatedRe
 });
 
 // POST /quizzes - Create quiz manually (instructor / admin)
-quizzesRouter.post('/quizzes', authenticateToken, requireRole('instructor', 'admin'), async (req: AuthenticatedRequest, res: Response, next) => {
+quizzesRouter.post(['/quizzes', '/'], authenticateToken, requireRole('instructor', 'admin'), async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { module_id, title, is_ai_generated, generated_from_lecture_id, questions } = req.body;
 
@@ -122,7 +122,7 @@ quizzesRouter.post('/quizzes', authenticateToken, requireRole('instructor', 'adm
 });
 
 // POST /quizzes/:id/attempt - Start an attempt
-quizzesRouter.post('/quizzes/:id/attempt', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+quizzesRouter.post(['/quizzes/:id/attempt', '/:id/attempt'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id: quizId } = req.params;
     const userId = req.user!.id;
@@ -141,7 +141,7 @@ quizzesRouter.post('/quizzes/:id/attempt', authenticateToken, async (req: Authen
 });
 
 // POST /attempts/:id/submit - Submit answers, auto-grade
-quizzesRouter.post('/attempts/:id/submit', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+quizzesRouter.post(['/attempts/:id/submit', '/:id/submit'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id: attemptId } = req.params;
     const { answers } = req.body; // array of { question_id, selected_option_id or selected_option_ids, text_answer }
@@ -159,19 +159,25 @@ quizzesRouter.post('/attempts/:id/submit', authenticateToken, async (req: Authen
 
     const quizId = attemptCheck.rows[0].quiz_id;
 
-    // Fetch questions and correct options
+    // Fetch questions and all options with question_type
     const questionsRes = await pool.query(
-      `SELECT qq.id as question_id, qq.question_text,
-              qo.id as correct_option_id, qo.option_text as correct_option_text
+      `SELECT qq.id as question_id, qq.question_text, qq.question_type,
+              json_agg(json_build_object(
+                'id', qo.id,
+                'option_text', qo.option_text,
+                'is_correct', qo.is_correct
+              )) as options
        FROM quiz_questions qq
-       LEFT JOIN quiz_options qo ON qq.id = qo.question_id AND qo.is_correct = TRUE
-       WHERE qq.quiz_id = $1`,
+       LEFT JOIN quiz_options qo ON qq.id = qo.question_id
+       WHERE qq.quiz_id = $1
+       GROUP BY qq.id, qq.question_text, qq.question_type, qq.order_index
+       ORDER BY qq.order_index ASC`,
       [quizId]
     );
 
-    const questionsMap = new Map<string, string>();
+    const questionsMap = new Map<string, any>();
     for (const row of questionsRes.rows) {
-      questionsMap.set(row.question_id, row.correct_option_id);
+      questionsMap.set(row.question_id, row);
     }
 
     let correctCount = 0;
@@ -183,23 +189,54 @@ quizzesRouter.post('/attempts/:id/submit', authenticateToken, async (req: Authen
       await client.query('BEGIN');
 
       for (const ans of (answers || [])) {
-        const correctOptId = questionsMap.get(ans.question_id);
-        const selectedId = ans.selected_option_id || (Array.isArray(ans.selected_option_ids) ? ans.selected_option_ids[0] : null);
-        const isCorrect = selectedId && correctOptId && selectedId === correctOptId;
+        const qInfo = questionsMap.get(ans.question_id);
+        if (!qInfo) continue;
+
+        const qType = qInfo.question_type || 'mcq';
+        const correctOptions = (qInfo.options || []).filter((o: any) => o.is_correct);
+        const correctIds: string[] = correctOptions.map((o: any) => o.id);
+
+        // Normalize selected option IDs
+        let selectedIds: string[] = [];
+        if (Array.isArray(ans.selected_option_ids)) {
+          selectedIds = ans.selected_option_ids.filter(Boolean);
+        } else if (ans.selected_option_id) {
+          selectedIds = [ans.selected_option_id];
+        }
+
+        let isCorrect = false;
+
+        if (qType === 'multi_select') {
+          // Both sets must match exactly
+          const setA = new Set(selectedIds);
+          const setB = new Set(correctIds);
+          isCorrect = setA.size > 0 && setA.size === setB.size && [...setA].every(id => setB.has(id));
+        } else if (qType === 'short_answer') {
+          // Compare student's text answer with correct option text (normalized, case-insensitive)
+          const studentText = (ans.text_answer || '').trim().toLowerCase();
+          isCorrect = correctOptions.some((opt: any) => {
+            const expected = (opt.option_text || '').trim().toLowerCase();
+            return studentText.length > 0 && (studentText === expected || studentText.includes(expected) || expected.includes(studentText));
+          });
+        } else {
+          // MCQ (single choice)
+          const selectedId = selectedIds[0] || null;
+          isCorrect = selectedId !== null && correctIds.includes(selectedId);
+        }
 
         if (isCorrect) correctCount++;
 
-        const optIds = selectedId ? [selectedId] : [];
         await client.query(
           `INSERT INTO quiz_answers (attempt_id, question_id, selected_option_ids, text_answer, is_correct)
            VALUES ($1, $2, $3, $4, $5)`,
-          [attemptId, ans.question_id, optIds, ans.text_answer || null, isCorrect]
+          [attemptId, ans.question_id, selectedIds, ans.text_answer || null, isCorrect]
         );
 
         reviewBreakdown.push({
           question_id: ans.question_id,
-          selected_option_id: selectedId,
-          correct_option_id: correctOptId,
+          question_type: qType,
+          selected_option_ids: selectedIds,
+          correct_option_ids: correctIds,
           is_correct: isCorrect,
         });
       }

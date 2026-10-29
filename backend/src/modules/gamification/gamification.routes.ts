@@ -1,11 +1,12 @@
 import { Router, Response } from 'express';
 import { pool } from '../../config/db';
 import { authenticateToken, AuthenticatedRequest } from '../../middleware/auth';
+import { generateCertificatePdf } from '../../utils/certificate';
 
 export const gamificationRouter = Router();
 
 // GET /users/me/badges
-gamificationRouter.get('/users/me/badges', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+gamificationRouter.get(['/users/me/badges', '/me/badges', '/badges'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const badgesRes = await pool.query(
       `SELECT b.*, ub.earned_at
@@ -28,7 +29,7 @@ gamificationRouter.get('/users/me/badges', authenticateToken, async (req: Authen
 });
 
 // GET /users/me/streak
-gamificationRouter.get('/users/me/streak', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+gamificationRouter.get(['/users/me/streak', '/me/streak', '/streak'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const streakRes = await pool.query(
       `SELECT * FROM streaks WHERE user_id = $1`,
@@ -47,7 +48,7 @@ gamificationRouter.get('/users/me/streak', authenticateToken, async (req: Authen
 });
 
 // GET /leaderboard/:courseId
-gamificationRouter.get('/leaderboard/:courseId', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+gamificationRouter.get(['/leaderboard/:courseId', '/:courseId'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { courseId } = req.params;
 
@@ -76,21 +77,48 @@ gamificationRouter.get('/leaderboard/:courseId', authenticateToken, async (req: 
   }
 });
 
-// GET /recommendations/me
-gamificationRouter.get('/recommendations/me', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+// GET /recommendations/me - Dynamic rule-based + category affinity recommendations
+gamificationRouter.get(['/recommendations/me', '/me'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const userId = req.user!.id;
 
-    // Fetch existing stored recommendations or dynamic suggestions based on courses not yet enrolled in
+    // 1. Analyze student's enrolled courses and quiz scores to derive category interest & skill level
+    const userProfileRes = await pool.query(
+      `SELECT c.category, c.difficulty, COALESCE(AVG(qa.score), 0) as avg_score
+       FROM enrollments e
+       JOIN courses c ON e.course_id = c.id
+       LEFT JOIN modules m ON m.course_id = c.id
+       LEFT JOIN quizzes q ON q.module_id = m.id
+       LEFT JOIN quiz_attempts qa ON qa.quiz_id = q.id AND qa.user_id = $1
+       WHERE e.user_id = $1
+       GROUP BY c.category, c.difficulty
+       ORDER BY avg_score DESC`,
+      [userId]
+    );
+
+    const preferredCategory = userProfileRes.rows.length > 0 ? userProfileRes.rows[0].category : null;
+    const avgScore = userProfileRes.rows.length > 0 ? parseFloat(userProfileRes.rows[0].avg_score) : 75;
+
+    // 2. Query unenrolled approved courses, prioritizing preferred category and matching difficulty
     const recsRes = await pool.query(
       `SELECT c.id, c.title, c.description, c.category, c.difficulty, c.thumbnail_url, c.price,
-              'Recommended based on popular demand and your learning interests' as reason,
-              92.5 as score
+              CASE
+                WHEN c.category = $2 THEN 'Recommended based on your active progress in ' || $2
+                WHEN $3 >= 80 AND c.difficulty = 'advanced' THEN 'Level up: Recommended advanced curriculum for top performers'
+                WHEN $3 < 70 AND c.difficulty = 'beginner' THEN 'Foundational refresher to strengthen your core concepts'
+                ELSE 'Popular course aligned with your learning profile'
+              END as reason,
+              CASE
+                WHEN c.category = $2 THEN 96.0
+                WHEN $3 >= 80 AND c.difficulty = 'advanced' THEN 92.5
+                ELSE 88.0
+              END as score
        FROM courses c
        WHERE c.status = 'approved'
          AND c.id NOT IN (SELECT course_id FROM enrollments WHERE user_id = $1)
+       ORDER BY (CASE WHEN c.category = $2 THEN 1 ELSE 2 END), score DESC
        LIMIT 4`,
-      [userId]
+      [userId, preferredCategory || 'Artificial Intelligence', avgScore]
     );
 
     res.json(recsRes.rows);
@@ -100,7 +128,7 @@ gamificationRouter.get('/recommendations/me', authenticateToken, async (req: Aut
 });
 
 // GET /certificates/me
-gamificationRouter.get('/certificates/me', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+gamificationRouter.get(['/certificates/me', '/me'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const certs = await pool.query(
       `SELECT cert.*, c.title as course_title, c.thumbnail_url as course_thumbnail
@@ -117,7 +145,7 @@ gamificationRouter.get('/certificates/me', authenticateToken, async (req: Authen
 });
 
 // POST /courses/:id/certificate
-gamificationRouter.post('/courses/:id/certificate', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+gamificationRouter.post(['/courses/:id/certificate', '/:id/certificate', '/:id'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id: courseId } = req.params;
     const userId = req.user!.id;
@@ -138,12 +166,28 @@ gamificationRouter.post('/courses/:id/certificate', authenticateToken, async (re
       return;
     }
 
+    let certUrl = `/uploads/certificates/cert_${userId}_${courseId}.pdf`;
+    try {
+      const userRes = await pool.query('SELECT full_name FROM users WHERE id = $1', [userId]);
+      const courseRes = await pool.query('SELECT title FROM courses WHERE id = $1', [courseId]);
+      const studentName = userRes.rows[0]?.full_name || 'Valued Learner';
+      const courseTitle = courseRes.rows[0]?.title || 'Professional Course';
+      certUrl = await generateCertificatePdf({
+        userId,
+        studentName,
+        courseId,
+        courseTitle,
+      });
+    } catch (pdfErr) {
+      console.error('Certificate PDF generation error:', pdfErr);
+    }
+
     const certRes = await pool.query(
       `INSERT INTO certificates (user_id, course_id, certificate_url)
        VALUES ($1, $2, $3)
-       ON CONFLICT (user_id, course_id) DO UPDATE SET issued_at = now()
+       ON CONFLICT (user_id, course_id) DO UPDATE SET certificate_url = EXCLUDED.certificate_url, issued_at = now()
        RETURNING *`,
-      [userId, courseId, `https://lms-ai.local/certificates/${userId}_${courseId}.pdf`]
+      [userId, courseId, certUrl]
     );
 
     res.status(201).json(certRes.rows[0]);

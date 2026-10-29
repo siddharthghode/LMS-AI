@@ -78,6 +78,8 @@ app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/courses', coursesRouter);
 app.use('/api/v1/enrollments', enrollmentsRouter);
 app.use('/api/v1/lectures', enrollmentsRouter);
+app.use('/api/v1/notes', enrollmentsRouter);
+app.use('/api/v1/bookmarks', enrollmentsRouter);
 app.use('/api/v1/quizzes', quizzesRouter);
 app.use('/api/v1/attempts', quizzesRouter);
 app.use('/api/v1/assignments', assignmentsRouter);

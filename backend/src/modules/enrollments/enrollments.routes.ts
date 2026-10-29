@@ -1,11 +1,12 @@
 import { Router, Response } from 'express';
 import { pool } from '../../config/db';
 import { authenticateToken, AuthenticatedRequest } from '../../middleware/auth';
+import { generateCertificatePdf } from '../../utils/certificate';
 
 export const enrollmentsRouter = Router();
 
 // POST /courses/:id/enroll - Enroll current student
-enrollmentsRouter.post('/courses/:id/enroll', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+enrollmentsRouter.post(['/courses/:id/enroll', '/:id/enroll'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id: courseId } = req.params;
     const userId = req.user!.id;
@@ -60,7 +61,7 @@ enrollmentsRouter.get('/me', authenticateToken, async (req: AuthenticatedRequest
 });
 
 // GET /courses/:id/enrollment-status
-enrollmentsRouter.get('/courses/:id/enrollment-status', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+enrollmentsRouter.get(['/courses/:id/enrollment-status', '/:id/enrollment-status'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id: courseId } = req.params;
     const userId = req.user!.id;
@@ -88,7 +89,7 @@ enrollmentsRouter.get('/courses/:id/enrollment-status', authenticateToken, async
 });
 
 // POST /lectures/:id/progress - Update watched-seconds / mark complete
-enrollmentsRouter.post('/lectures/:id/progress', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+enrollmentsRouter.post(['/lectures/:id/progress', '/:id/progress'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id: lectureId } = req.params;
     const { watched_seconds, completed } = req.body;
@@ -156,11 +157,27 @@ enrollmentsRouter.post('/lectures/:id/progress', authenticateToken, async (req: 
 
     // If 100% completed, auto-issue certificate
     if (progressPercent === 100) {
+      let certUrl = `/uploads/certificates/cert_${userId}_${courseId}.pdf`;
+      try {
+        const userRes = await pool.query('SELECT full_name FROM users WHERE id = $1', [userId]);
+        const courseRes = await pool.query('SELECT title FROM courses WHERE id = $1', [courseId]);
+        const studentName = userRes.rows[0]?.full_name || 'Valued Learner';
+        const courseTitle = courseRes.rows[0]?.title || 'Professional Course';
+        certUrl = await generateCertificatePdf({
+          userId,
+          studentName,
+          courseId,
+          courseTitle,
+        });
+      } catch (pdfErr) {
+        console.error('PDF generation error:', pdfErr);
+      }
+
       await pool.query(
         `INSERT INTO certificates (user_id, course_id, certificate_url)
          VALUES ($1, $2, $3)
-         ON CONFLICT (user_id, course_id) DO NOTHING`,
-        [userId, courseId, `https://lms-ai.local/certificates/${userId}_${courseId}.pdf`]
+         ON CONFLICT (user_id, course_id) DO UPDATE SET certificate_url = EXCLUDED.certificate_url`,
+        [userId, courseId, certUrl]
       );
     }
 
@@ -175,7 +192,7 @@ enrollmentsRouter.post('/lectures/:id/progress', authenticateToken, async (req: 
 });
 
 // GET /lectures/:id/notes
-enrollmentsRouter.get('/lectures/:id/notes', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+enrollmentsRouter.get(['/lectures/:id/notes', '/:id/notes'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id: lectureId } = req.params;
     const notes = await pool.query(
@@ -189,7 +206,7 @@ enrollmentsRouter.get('/lectures/:id/notes', authenticateToken, async (req: Auth
 });
 
 // POST /lectures/:id/notes
-enrollmentsRouter.post('/lectures/:id/notes', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+enrollmentsRouter.post(['/lectures/:id/notes', '/:id/notes'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id: lectureId } = req.params;
     const { content, timestamp_seconds } = req.body;
@@ -219,7 +236,7 @@ enrollmentsRouter.delete('/notes/:id', authenticateToken, async (req: Authentica
 });
 
 // GET /lectures/:id/bookmarks
-enrollmentsRouter.get('/lectures/:id/bookmarks', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+enrollmentsRouter.get(['/lectures/:id/bookmarks', '/:id/bookmarks'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id: lectureId } = req.params;
     const bookmarks = await pool.query(
@@ -233,7 +250,7 @@ enrollmentsRouter.get('/lectures/:id/bookmarks', authenticateToken, async (req: 
 });
 
 // POST /lectures/:id/bookmarks
-enrollmentsRouter.post('/lectures/:id/bookmarks', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+enrollmentsRouter.post(['/lectures/:id/bookmarks', '/:id/bookmarks'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id: lectureId } = req.params;
     const { timestamp_seconds } = req.body;
