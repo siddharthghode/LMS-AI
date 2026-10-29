@@ -4,8 +4,8 @@ import { authenticateToken, AuthenticatedRequest } from '../../middleware/auth';
 
 export const notificationsRouter = Router();
 
-// GET /notifications/me
-notificationsRouter.get('/me', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+// GET /notifications/me or /notifications
+notificationsRouter.get(['/me', '/'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const notifs = await pool.query(
       `SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`,

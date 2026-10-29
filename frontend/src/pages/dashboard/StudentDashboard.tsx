@@ -45,18 +45,28 @@ export const StudentDashboard: React.FC = () => {
   const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const fetchDashboardData = () => {
+    setIsLoading(true);
+    setError(null);
     Promise.all([
       api.get('/enrollments/me'),
       api.get('/recommendations/me'),
     ])
       .then(([enrollRes, recRes]) => {
-        setEnrollments(enrollRes.data);
-        setRecommendations(recRes.data);
+        setEnrollments(enrollRes.data || []);
+        setRecommendations(recRes.data || []);
       })
-      .catch(err => console.error('Dashboard load error:', err))
+      .catch(err => {
+        console.error('Dashboard load error:', err);
+        setError('Failed to load dashboard data. Please try again.');
+      })
       .finally(() => setIsLoading(false));
+  };
+
+  useEffect(() => {
+    fetchDashboardData();
   }, []);
 
   const avgProgress = enrollments.length > 0
@@ -150,7 +160,34 @@ export const StudentDashboard: React.FC = () => {
           </Link>
         </div>
 
-        {enrollments.length === 0 && !isLoading ? (
+        {error && (
+          <div className="p-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-xs text-red-300 flex items-center justify-between">
+            <span>{error}</span>
+            <button
+              onClick={fetchDashboardData}
+              className="px-3 py-1 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-white font-semibold"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {isLoading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="rounded-2xl bg-slate-800/40 border border-slate-800 animate-pulse overflow-hidden">
+                <div className="h-44 bg-slate-700" />
+                <div className="p-5 space-y-3">
+                  <div className="w-16 h-3 bg-slate-700 rounded" />
+                  <div className="w-3/4 h-5 bg-slate-700 rounded" />
+                  <div className="w-full h-8 bg-slate-800 rounded" />
+                  <div className="h-2 bg-slate-700 rounded-full" />
+                  <div className="h-10 bg-slate-700 rounded-xl" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : enrollments.length === 0 ? (
           <div className="p-12 text-center rounded-3xl bg-slate-800/20 border border-slate-800">
             <BookOpen className="w-12 h-12 text-slate-600 mx-auto mb-3" />
             <h3 className="text-base font-semibold text-white mb-1">No enrolled courses yet</h3>

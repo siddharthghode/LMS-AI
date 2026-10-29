@@ -14,12 +14,18 @@ import {
   Sparkles,
   Flag,
   Trash2,
-  Check
+  Check,
+  Server,
+  Activity,
+  Cpu,
+  RefreshCw
 } from 'lucide-react';
 
 export const AdminPanel: React.FC = () => {
   const location = useLocation();
-  const initialTab = location.pathname.includes('/admin/moderation')
+  const initialTab = location.pathname.includes('/admin/jobs')
+    ? 'jobs'
+    : location.pathname.includes('/admin/moderation')
     ? 'moderation'
     : location.pathname.includes('/admin/approvals')
     ? 'approvals'
@@ -27,12 +33,15 @@ export const AdminPanel: React.FC = () => {
     ? 'users'
     : 'overview';
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'approvals' | 'users' | 'moderation' | 'audit'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'overview' | 'approvals' | 'users' | 'moderation' | 'audit' | 'jobs'>(initialTab);
   const [metrics, setMetrics] = useState<any>(null);
   const [pendingCourses, setPendingCourses] = useState<any[]>([]);
   const [usersList, setUsersList] = useState<any[]>([]);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [flaggedPosts, setFlaggedPosts] = useState<any[]>([]);
+  const [queueStats, setQueueStats] = useState<any>(null);
+  const [isDispatchingStreak, setIsDispatchingStreak] = useState(false);
+  const [jobMessage, setJobMessage] = useState('');
   const [isLoading, setIsLoading] = useState(true);
 
   // Modal for approval feedback
@@ -48,16 +57,35 @@ export const AdminPanel: React.FC = () => {
       api.get('/admin/users'),
       api.get('/admin/audit-logs'),
       api.get('/admin/moderation/flagged-posts'),
+      api.get('/admin/jobs/status').catch(() => ({ data: { queues: null } })),
     ])
-      .then(([overviewRes, pendingRes, usersRes, auditRes, flaggedRes]) => {
+      .then(([overviewRes, pendingRes, usersRes, auditRes, flaggedRes, jobsRes]) => {
         setMetrics(overviewRes.data);
         setPendingCourses(pendingRes.data);
         setUsersList(usersRes.data);
         setAuditLogs(auditRes.data);
         setFlaggedPosts(flaggedRes.data);
+        if (jobsRes?.data?.queues) {
+          setQueueStats(jobsRes.data.queues);
+        }
       })
       .catch(err => console.error('Admin panel load failed:', err))
       .finally(() => setIsLoading(false));
+  };
+
+  const handleRunStreakNow = async () => {
+    setIsDispatchingStreak(true);
+    setJobMessage('');
+    try {
+      const res = await api.post('/admin/jobs/streaks/run');
+      setJobMessage(`Success: ${res.data.message || 'Streak evaluation job dispatched'} (Job ID: ${res.data.job_id})`);
+      const statsRes = await api.get('/admin/jobs/status');
+      setQueueStats(statsRes.data?.queues);
+    } catch (err: any) {
+      setJobMessage(`Error: ${err.response?.data?.message || err.message}`);
+    } finally {
+      setIsDispatchingStreak(false);
+    }
   };
 
   const handleDismissFlag = async (postId: string) => {
@@ -137,6 +165,7 @@ export const AdminPanel: React.FC = () => {
             { id: 'users', label: 'User Directory' },
             { id: 'moderation', label: `Moderation (${flaggedPosts.length})` },
             { id: 'audit', label: 'Audit Trail' },
+            { id: 'jobs', label: 'Background Jobs' },
           ].map(tab => (
             <button
               key={tab.id}
@@ -454,6 +483,174 @@ export const AdminPanel: React.FC = () => {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Background Jobs & Queues Tab */}
+      {activeTab === 'jobs' && (
+        <div className="space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-4 pb-2 border-b border-slate-800">
+            <div>
+              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <Server className="w-5 h-5 text-indigo-400" />
+                Asynchronous Job Queues (BullMQ & Redis)
+              </h2>
+              <p className="text-xs text-slate-400">
+                Monitor live queue workers, inspect processed background jobs, and trigger scheduled maintenance crons manually.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  api.get('/admin/jobs/status')
+                    .then(res => setQueueStats(res.data?.queues))
+                    .catch(err => console.error('Failed to refresh queue stats:', err));
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-slate-700 transition-colors"
+              >
+                <RefreshCw className="w-3.5 h-3.5" /> Refresh
+              </button>
+              <button
+                onClick={handleRunStreakNow}
+                disabled={isDispatchingStreak}
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-xs font-bold shadow-md shadow-amber-600/20 transition-all"
+              >
+                <Activity className="w-3.5 h-3.5" />
+                {isDispatchingStreak ? 'Dispatched...' : 'Trigger Daily Streak Evaluation'}
+              </button>
+            </div>
+          </div>
+
+          {jobMessage && (
+            <div className={`p-4 rounded-2xl text-xs font-medium border ${
+              jobMessage.startsWith('Success')
+                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+                : 'bg-red-500/10 border-red-500/20 text-red-300'
+            }`}>
+              {jobMessage}
+            </div>
+          )}
+
+          {/* Queue Statistics Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Streak Queue */}
+            <div className="p-5 rounded-2xl bg-slate-800/40 border border-slate-800 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center">
+                    <Activity className="w-4 h-4 text-amber-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Daily Streak Queue</h3>
+                    <div className="text-[11px] text-slate-400">Cron: Midnight UTC</div>
+                  </div>
+                </div>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  Active
+                </span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="p-2 rounded-xl bg-slate-900 border border-slate-800">
+                  <div className="text-xs text-slate-400">Waiting</div>
+                  <div className="text-base font-bold text-white">
+                    {queueStats?.streak?.waiting ?? 0}
+                  </div>
+                </div>
+                <div className="p-2 rounded-xl bg-slate-900 border border-slate-800">
+                  <div className="text-xs text-slate-400">Completed</div>
+                  <div className="text-base font-bold text-emerald-400">
+                    {queueStats?.streak?.completed ?? 0}
+                  </div>
+                </div>
+                <div className="p-2 rounded-xl bg-slate-900 border border-slate-800">
+                  <div className="text-xs text-slate-400">Failed</div>
+                  <div className="text-base font-bold text-red-400">
+                    {queueStats?.streak?.failed ?? 0}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Ingestion Queue */}
+            <div className="p-5 rounded-2xl bg-slate-800/40 border border-slate-800 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-indigo-500/10 flex items-center justify-center">
+                    <Cpu className="w-4 h-4 text-indigo-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Lecture Ingestion Queue</h3>
+                    <div className="text-[11px] text-slate-400">pgvector Chunking</div>
+                  </div>
+                </div>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  Active
+                </span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="p-2 rounded-xl bg-slate-900 border border-slate-800">
+                  <div className="text-xs text-slate-400">Waiting</div>
+                  <div className="text-base font-bold text-white">
+                    {queueStats?.ingestion?.waiting ?? 0}
+                  </div>
+                </div>
+                <div className="p-2 rounded-xl bg-slate-900 border border-slate-800">
+                  <div className="text-xs text-slate-400">Completed</div>
+                  <div className="text-base font-bold text-emerald-400">
+                    {queueStats?.ingestion?.completed ?? 0}
+                  </div>
+                </div>
+                <div className="p-2 rounded-xl bg-slate-900 border border-slate-800">
+                  <div className="text-xs text-slate-400">Failed</div>
+                  <div className="text-base font-bold text-red-400">
+                    {queueStats?.ingestion?.failed ?? 0}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Notification Queue */}
+            <div className="p-5 rounded-2xl bg-slate-800/40 border border-slate-800 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-purple-500/10 flex items-center justify-center">
+                    <Server className="w-4 h-4 text-purple-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Notification Queue</h3>
+                    <div className="text-[11px] text-slate-400">Learner Broadcasts</div>
+                  </div>
+                </div>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  Active
+                </span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="p-2 rounded-xl bg-slate-900 border border-slate-800">
+                  <div className="text-xs text-slate-400">Waiting</div>
+                  <div className="text-base font-bold text-white">
+                    {queueStats?.notification?.waiting ?? 0}
+                  </div>
+                </div>
+                <div className="p-2 rounded-xl bg-slate-900 border border-slate-800">
+                  <div className="text-xs text-slate-400">Completed</div>
+                  <div className="text-base font-bold text-emerald-400">
+                    {queueStats?.notification?.completed ?? 0}
+                  </div>
+                </div>
+                <div className="p-2 rounded-xl bg-slate-900 border border-slate-800">
+                  <div className="text-xs text-slate-400">Failed</div>
+                  <div className="text-base font-bold text-red-400">
+                    {queueStats?.notification?.failed ?? 0}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

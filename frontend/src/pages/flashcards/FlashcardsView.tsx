@@ -58,11 +58,27 @@ export const FlashcardsView: React.FC = () => {
     setCurrentIndex(prev => (prev - 1 + flashcards.length) % flashcards.length);
   };
 
-  if (isLoading || flashcards.length === 0) {
+  if (isLoading) {
     return (
       <div className="flex items-center justify-center p-24 text-slate-400 text-sm">
         <Sparkles className="w-5 h-5 text-indigo-400 animate-spin mr-2" />
-        Generating interactive flashcards...
+        Generating interactive flashcards with AI...
+      </div>
+    );
+  }
+
+  if (flashcards.length === 0) {
+    return (
+      <div className="max-w-md mx-auto p-12 text-center rounded-3xl bg-slate-800/40 border border-slate-800 space-y-4 my-12">
+        <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center mx-auto text-indigo-400">
+          <Layers className="w-6 h-6" />
+        </div>
+        <div>
+          <h3 className="text-base font-bold text-white mb-1">No Flashcards Generated</h3>
+          <p className="text-xs text-slate-400 leading-relaxed">
+            Flashcards are generated from lecture transcripts. Check back once course modules have ingested transcripts.
+          </p>
+        </div>
       </div>
     );
   }

@@ -24,14 +24,24 @@ export const AssignmentView: React.FC = () => {
 
   useEffect(() => {
     if (assignmentId) {
-      api.get(`/assignments/assignments/${assignmentId}`).then(res => {
-        setAssignment(res.data);
-      });
+      api.get(`/assignments/${assignmentId}`)
+        .then(res => setAssignment(res.data))
+        .catch(() => {
+          api.get(`/assignments/assignments/${assignmentId}`).then(res => setAssignment(res.data));
+        });
+
       // Check existing submission
-      api.get('/assignments/submissions/me').then(res => {
-        const found = (res.data || []).find((s: any) => s.assignment_id === assignmentId);
-        if (found) setExistingSubmission(found);
-      }).catch(() => {});
+      api.get('/submissions/me')
+        .then(res => {
+          const found = (res.data || []).find((s: any) => s.assignment_id === assignmentId);
+          if (found) setExistingSubmission(found);
+        })
+        .catch(() => {
+          api.get('/assignments/submissions/me').then(res => {
+            const found = (res.data || []).find((s: any) => s.assignment_id === assignmentId);
+            if (found) setExistingSubmission(found);
+          });
+        });
     }
   }, [assignmentId]);
 
@@ -41,7 +51,7 @@ export const AssignmentView: React.FC = () => {
 
     setIsSubmitting(true);
     try {
-      const res = await api.post(`/assignments/assignments/${assignmentId}/submit`, {
+      const res = await api.post(`/assignments/${assignmentId}/submit`, {
         text_submission: textSubmission,
         file_url: fileUrl || null,
       });

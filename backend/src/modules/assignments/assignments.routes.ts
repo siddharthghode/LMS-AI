@@ -5,7 +5,7 @@ import { authenticateToken, requireRole, AuthenticatedRequest } from '../../midd
 export const assignmentsRouter = Router();
 
 // GET /courses/:id/assignments
-assignmentsRouter.get('/courses/:id/assignments', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+assignmentsRouter.get(['/courses/:id/assignments', '/:id/assignments'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id: courseId } = req.params;
     const userId = req.user!.id;
@@ -26,8 +26,43 @@ assignmentsRouter.get('/courses/:id/assignments', authenticateToken, async (req:
   }
 });
 
+// GET /submissions/me - Student's submissions with grades & feedback
+assignmentsRouter.get(['/submissions/me', '/me'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+  try {
+    const subsRes = await pool.query(
+      `SELECT sub.*, a.title as assignment_title, a.course_id
+       FROM assignment_submissions sub
+       JOIN assignments a ON sub.assignment_id = a.id
+       WHERE sub.user_id = $1
+       ORDER BY sub.submitted_at DESC`,
+      [req.user!.id]
+    );
+    res.json(subsRes.rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /assignments/queue - All submissions across courses for instructor/admin grading queue
+assignmentsRouter.get(['/queue', '/instructor/all'], authenticateToken, requireRole('instructor', 'admin'), async (req: AuthenticatedRequest, res: Response, next) => {
+  try {
+    const subsRes = await pool.query(
+      `SELECT sub.*, a.title as assignment_title, c.title as course_title,
+              u.full_name as student_name, u.email as student_email, u.avatar_url as student_avatar
+       FROM assignment_submissions sub
+       JOIN assignments a ON sub.assignment_id = a.id
+       JOIN courses c ON a.course_id = c.id
+       JOIN users u ON sub.user_id = u.id
+       ORDER BY sub.submitted_at DESC`
+    );
+    res.json(subsRes.rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /assignments/:id
-assignmentsRouter.get('/assignments/:id', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+assignmentsRouter.get(['/assignments/:id', '/:id'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id } = req.params;
 
@@ -44,7 +79,7 @@ assignmentsRouter.get('/assignments/:id', authenticateToken, async (req: Authent
 });
 
 // POST /assignments - Create assignment (instructor / admin)
-assignmentsRouter.post('/assignments', authenticateToken, requireRole('instructor', 'admin'), async (req: AuthenticatedRequest, res: Response, next) => {
+assignmentsRouter.post(['/assignments', '/'], authenticateToken, requireRole('instructor', 'admin'), async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { course_id, title, instructions, rubric, due_date } = req.body;
 
@@ -62,7 +97,7 @@ assignmentsRouter.post('/assignments', authenticateToken, requireRole('instructo
 });
 
 // POST /assignments/:id/submit - Submit assignment (student)
-assignmentsRouter.post('/assignments/:id/submit', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+assignmentsRouter.post(['/assignments/:id/submit', '/:id/submit'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id: assignmentId } = req.params;
     const { file_url, text_submission } = req.body;
@@ -88,7 +123,7 @@ assignmentsRouter.post('/assignments/:id/submit', authenticateToken, async (req:
 });
 
 // GET /assignments/:id/submissions - View submissions (instructor / admin)
-assignmentsRouter.get('/assignments/:id/submissions', authenticateToken, requireRole('instructor', 'admin'), async (req: AuthenticatedRequest, res: Response, next) => {
+assignmentsRouter.get(['/assignments/:id/submissions', '/:id/submissions'], authenticateToken, requireRole('instructor', 'admin'), async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id: assignmentId } = req.params;
 
@@ -108,7 +143,7 @@ assignmentsRouter.get('/assignments/:id/submissions', authenticateToken, require
 });
 
 // PUT /submissions/:id/grade - Grade a submission (instructor / admin)
-assignmentsRouter.put('/submissions/:id/grade', authenticateToken, requireRole('instructor', 'admin'), async (req: AuthenticatedRequest, res: Response, next) => {
+assignmentsRouter.put(['/submissions/:id/grade', '/:id/grade'], authenticateToken, requireRole('instructor', 'admin'), async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id: submissionId } = req.params;
     const { grade, feedback } = req.body;
