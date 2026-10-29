@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import path from 'path';
+import fs from 'fs';
 import { config } from './config';
 import { pool, redis } from './config/db';
 import { errorHandler } from './middleware/errorHandler';
@@ -39,10 +40,26 @@ app.use(morgan('dev'));
 // Static files for uploaded materials
 app.use('/uploads', express.static(config.uploadDir));
 
+// Static documentation / OpenAPI spec
+const docsDir = [
+  path.resolve(__dirname, '../docs'),
+  path.resolve(process.cwd(), 'docs'),
+  path.resolve(__dirname, '../../docs'),
+].find(d => fs.existsSync(path.resolve(d, 'api-spec.yaml'))) || path.resolve(process.cwd(), 'docs');
+
+app.use('/docs', express.static(docsDir));
+app.get(['/api-docs/spec', '/docs/api-spec.yaml'], (req, res) => {
+  res.sendFile(path.resolve(docsDir, 'api-spec.yaml'));
+});
+
+import { initBackgroundWorkers, closeBackgroundWorkers, getQueueStats } from './jobs/worker';
+import { initStreakScheduler } from './jobs/streakCron';
+
 // Health check endpoint
 app.get('/health', async (req, res) => {
   let dbStatus = 'healthy';
   let redisStatus = 'healthy';
+  let queueStats: any = null;
 
   try {
     await pool.query('SELECT 1');
@@ -53,6 +70,7 @@ app.get('/health', async (req, res) => {
   try {
     if (redis.status === 'ready' || redis.status === 'connecting') {
       await redis.ping();
+      queueStats = await getQueueStats();
     } else {
       redisStatus = `status: ${redis.status}`;
     }
@@ -67,6 +85,7 @@ app.get('/health', async (req, res) => {
     timestamp: new Date().toISOString(),
     database: dbStatus,
     redis: redisStatus,
+    queues: queueStats,
   });
 });
 
@@ -131,16 +150,36 @@ async function startServer() {
     console.warn('Database startup migration warning:', err.message);
   }
 
-  server = app.listen(config.port, '0.0.0.0', () => {
+  server = app.listen(config.port, '0.0.0.0', async () => {
     console.log(`=========================================`);
     console.log(`LMS-AI Core Backend running on port ${config.port}`);
     console.log(`Health check: http://localhost:${config.port}/health`);
     console.log(`API Base: http://localhost:${config.port}/api/v1`);
     console.log(`Environment: ${config.env}`);
     console.log(`=========================================`);
+
+    // Initialize BullMQ Workers & Streak Schedulers
+    try {
+      initBackgroundWorkers();
+      await initStreakScheduler();
+    } catch (workerErr: any) {
+      console.warn('BullMQ initialization warning:', workerErr.message);
+    }
   });
 }
 
-startServer();
+process.on('SIGTERM', async () => {
+  await closeBackgroundWorkers();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  await closeBackgroundWorkers();
+  process.exit(0);
+});
+
+if (process.env.NODE_ENV !== 'test') {
+  startServer();
+}
 
 export { app, server };

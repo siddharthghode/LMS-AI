@@ -3,11 +3,13 @@ import { z } from 'zod';
 import { pool } from '../../config/db';
 import { authenticateToken, requireRole, AuthenticatedRequest } from '../../middleware/auth';
 import { triggerLectureIngestion } from '../ai/ai.service';
+import { cacheMiddleware, invalidateCachePattern } from '../../utils/cache';
+import { ingestionQueue } from '../../jobs/queues';
 
 export const coursesRouter = Router();
 
-// GET /courses - Public catalog
-coursesRouter.get('/', async (req: Request, res: Response, next) => {
+// GET /courses - Public catalog (Cached TTL 5 min)
+coursesRouter.get('/', cacheMiddleware(300, 'cache:courses:list'), async (req: Request, res: Response, next) => {
   try {
     const { category, difficulty, q, page = '1', limit = '12', status } = req.query;
     const pageNum = Math.max(1, parseInt(page as string, 10));
@@ -78,8 +80,8 @@ coursesRouter.get('/', async (req: Request, res: Response, next) => {
   }
 });
 
-// GET /courses/:id - Course detail with modules and lectures
-coursesRouter.get('/:id', async (req: Request, res: Response, next) => {
+// GET /courses/:id - Course detail with modules and lectures (Cached TTL 5 min)
+coursesRouter.get('/:id', cacheMiddleware(300, 'cache:courses:detail'), async (req: Request, res: Response, next) => {
   try {
     const { id } = req.params;
 
@@ -170,6 +172,9 @@ coursesRouter.post('/', authenticateToken, requireRole('instructor', 'admin'), a
       [req.user!.id, insertRes.rows[0].id, JSON.stringify({ title: data.title, status })]
     );
 
+    // Invalidate course cache
+    await invalidateCachePattern('cache:courses:*');
+
     res.status(201).json(insertRes.rows[0]);
   } catch (err) {
     next(err);
@@ -209,6 +214,7 @@ coursesRouter.put('/:id', authenticateToken, requireRole('instructor', 'admin'),
       [title, description, category, difficulty, thumbnail_url, price, req.user!.role === 'admin' ? status : undefined, id]
     );
 
+    await invalidateCachePattern('cache:courses:*');
     res.json(updateRes.rows[0]);
   } catch (err) {
     next(err);
@@ -230,6 +236,9 @@ coursesRouter.post('/:id/modules', authenticateToken, requireRole('instructor', 
        RETURNING *`,
       [courseId, title || 'New Module', nextOrder]
     );
+
+    // Invalidate course cache
+    await invalidateCachePattern('cache:courses:*');
 
     res.status(201).json(insertRes.rows[0]);
   } catch (err) {
@@ -271,13 +280,18 @@ coursesRouter.post('/modules/:id/lectures', authenticateToken, requireRole('inst
 
     const lecture = insertRes.rows[0];
 
-    // Trigger asynchronous ingestion & chunking for vector store RAG
+    // Enqueue asynchronous background ingestion & chunking with BullMQ
     if (transcript && transcript.trim().length > 0) {
-      triggerLectureIngestion(courseId, lecture.id, transcript).catch(err => {
-        console.warn('Background ingestion trigger warning:', err.message);
+      ingestionQueue.add('ingest-lecture', {
+        courseId,
+        lectureId: lecture.id,
+        transcript,
+      }).catch(err => {
+        console.warn('BullMQ ingestion queue addition warning:', err.message);
       });
     }
 
+    await invalidateCachePattern('cache:courses:*');
     res.status(201).json(lecture);
   } catch (err) {
     next(err);
@@ -331,6 +345,7 @@ coursesRouter.post('/:id/approve', authenticateToken, requireRole('admin'), asyn
       }
 
       await client.query('COMMIT');
+      await invalidateCachePattern('cache:courses:*');
       res.json({ message: `Course ${decision} successfully`, course: courseRes.rows[0] });
     } catch (dbErr) {
       await client.query('ROLLBACK');

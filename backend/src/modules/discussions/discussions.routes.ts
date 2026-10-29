@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { pool } from '../../config/db';
 import { authenticateToken, AuthenticatedRequest } from '../../middleware/auth';
+import { notificationQueue } from '../../jobs/queues';
 
 export const discussionsRouter = Router();
 
@@ -181,6 +182,19 @@ discussionsRouter.post(['/courses/:id/announcements', '/:id/announcements'], aut
        RETURNING *`,
       [courseId, req.user!.id, content]
     );
+
+    // Enqueue broadcast notification job with BullMQ
+    const courseRes = await pool.query('SELECT title FROM courses WHERE id = $1', [courseId]);
+    const courseTitle = courseRes.rows[0]?.title || 'Course Announcement';
+
+    notificationQueue.add('broadcast-announcement', {
+      courseId,
+      announcementId: annRes.rows[0].id,
+      title: courseTitle,
+      content,
+    }).catch(err => {
+      console.warn('BullMQ notification dispatch warning:', err.message);
+    });
 
     res.status(201).json(annRes.rows[0]);
   } catch (err) {

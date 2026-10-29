@@ -24,6 +24,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 # Copy compiled JavaScript & SQL migrations from builder
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --from=builder --chown=node:node /app/src/db/migrations ./dist/db/migrations
+COPY --from=builder --chown=node:node /app/docs ./docs
 
 # Create uploads directory with node ownership
 RUN mkdir -p uploads && chown -R node:node /app

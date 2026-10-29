@@ -1,6 +1,8 @@
 import { Router, Response } from 'express';
 import { pool } from '../../config/db';
 import { authenticateToken, requireRole, AuthenticatedRequest } from '../../middleware/auth';
+import { triggerStreakEvaluationNow } from '../../jobs/streakCron';
+import { getQueueStats } from '../../jobs/worker';
 
 export const adminRouter = Router();
 
@@ -232,6 +234,36 @@ adminRouter.get('/audit-logs', async (req: AuthenticatedRequest, res: Response, 
        LIMIT 50`
     );
     res.json(logs.rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /admin/jobs/status - Live BullMQ queue statistics
+adminRouter.get('/jobs/status', async (req: AuthenticatedRequest, res: Response, next) => {
+  try {
+    const stats = await getQueueStats();
+    res.json({
+      status: 'ok',
+      queues: stats,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /admin/jobs/streaks/run - Manually trigger streak maintenance
+adminRouter.post('/jobs/streaks/run', async (req: AuthenticatedRequest, res: Response, next) => {
+  try {
+    const job = await triggerStreakEvaluationNow();
+    res.json({
+      success: true,
+      message: 'Streak evaluation job dispatched to BullMQ',
+      job_id: job.id,
+      queue: job.queueName,
+      triggered_at: new Date().toISOString(),
+    });
   } catch (err) {
     next(err);
   }

@@ -1,0 +1,475 @@
+openapi: 3.0.3
+info:
+  title: LMS-AI Core & AI Tutor Platform API
+  description: >
+    Production REST API specification for LMS-AI: an AI-first learning management system featuring
+    course authoring, grounded RAG tutoring with pgvector, real binary PDF certifications,
+    multi-type quiz auto-grading, threaded community forums, Redis performance caching,
+    and BullMQ background job queues.
+  version: 1.0.0
+  contact:
+    name: LMS-AI Engineering Team
+    url: https://github.com/example/LMS-AI
+
+servers:
+  - url: http://localhost:5000/api/v1
+    description: Local Backend Service
+  - url: http://localhost:8000/api
+    description: Python FastAPI AI Service
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Enter the JWT access token obtained via /auth/login or /auth/register.
+
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: NOT_FOUND
+            message:
+              type: string
+              example: Resource not found
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        full_name:
+          type: string
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [student, instructor, admin]
+        avatar_url:
+          type: string
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    Course:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+        difficulty:
+          type: string
+          enum: [beginner, intermediate, advanced]
+        thumbnail_url:
+          type: string
+        price:
+          type: number
+        status:
+          type: string
+          enum: [draft, pending, approved, rejected]
+        instructor_id:
+          type: string
+          format: uuid
+        instructor_name:
+          type: string
+
+    QuizQuestion:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        question_text:
+          type: string
+        question_type:
+          type: string
+          enum: [mcq, multi_select, short_answer]
+        options:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              option_text:
+                type: string
+              is_correct:
+                type: boolean
+
+    QueueStatus:
+      type: object
+      properties:
+        active:
+          type: integer
+        completed:
+          type: integer
+        failed:
+          type: integer
+        delayed:
+          type: integer
+        waiting:
+          type: integer
+
+paths:
+  # ==========================================
+  # AUTHENTICATION
+  # ==========================================
+  /auth/register:
+    post:
+      summary: Register a new student or instructor
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [full_name, email, password]
+              properties:
+                full_name: { type: string }
+                email: { type: string, format: email }
+                password: { type: string }
+                role: { type: string, enum: [student, instructor] }
+      responses:
+        '201':
+          description: Registration successful
+        '409':
+          description: User already exists
+
+  /auth/login:
+    post:
+      summary: Authenticate with email and password
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200':
+          description: Access and refresh tokens issued
+        '401':
+          description: Invalid email or password
+
+  /auth/refresh:
+    post:
+      summary: Exchange refresh token for new access token
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200':
+          description: New access token generated
+
+  /auth/me:
+    get:
+      summary: Get authenticated user profile
+      tags: [Authentication]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+
+  # ==========================================
+  # COURSES & CATALOG
+  # ==========================================
+  /courses:
+    get:
+      summary: Filterable course catalog (Cached TTL 5 min)
+      tags: [Courses]
+      parameters:
+        - name: category
+          in: query
+          schema: { type: string }
+        - name: difficulty
+          in: query
+          schema: { type: string, enum: [beginner, intermediate, advanced] }
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 12 }
+      responses:
+        '200':
+          description: Paginated courses list with X-Cache HIT/MISS header
+    post:
+      summary: Create new course draft (Instructor / Admin)
+      tags: [Courses]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, category, difficulty]
+              properties:
+                title: { type: string }
+                description: { type: string }
+                category: { type: string }
+                difficulty: { type: string, enum: [beginner, intermediate, advanced] }
+                price: { type: number, default: 0 }
+      responses:
+        '201':
+          description: Course created
+
+  /courses/{id}:
+    get:
+      summary: Course details with syllabus modules & lectures (Cached TTL 5 min)
+      tags: [Courses]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Course syllabus and metadata
+        '404':
+          description: Course not found
+
+  /courses/{id}/approve:
+    post:
+      summary: Review and approve/reject course (Admin)
+      tags: [Courses]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approved, rejected] }
+                comment: { type: string }
+      responses:
+        '200':
+          description: Course status updated and instructor notified
+
+  # ==========================================
+  # QUIZZES & ASSESSMENTS
+  # ==========================================
+  /quizzes/{id}:
+    get:
+      summary: Fetch quiz with questions and options
+      tags: [Quizzes]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Quiz details and questions
+
+  /quizzes/{id}/attempt:
+    post:
+      summary: Start a quiz attempt
+      tags: [Quizzes]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '201':
+          description: New attempt instance created
+
+  /attempts/{id}/submit:
+    post:
+      summary: Submit answers for auto-grading (MCQ, Multi-Select, Short-Answer)
+      tags: [Quizzes]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [answers]
+              properties:
+                answers:
+                  type: array
+                  items:
+                    type: object
+                    required: [question_id]
+                    properties:
+                      question_id: { type: string, format: uuid }
+                      selected_option_id: { type: string, format: uuid }
+                      selected_option_ids:
+                        type: array
+                        items: { type: string, format: uuid }
+                      text_answer: { type: string }
+      responses:
+        '200':
+          description: Graded assessment result with score, breakdown, and awarded badges
+
+  # ==========================================
+  # DISCUSSIONS & ANNOUNCEMENTS
+  # ==========================================
+  /courses/{id}/discussions:
+    get:
+      summary: List forum discussion threads
+      tags: [Discussions]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Course discussion threads
+
+  /courses/{id}/announcements:
+    get:
+      summary: List broadcast announcements
+      tags: [Discussions]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Course announcements
+    post:
+      summary: Post announcement and dispatch BullMQ background notifications (Instructor/Admin)
+      tags: [Discussions]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string }
+      responses:
+        '201':
+          description: Announcement published and background notification job queued
+
+  # ==========================================
+  # GAMIFICATION & CERTIFICATES
+  # ==========================================
+  /certificates/me:
+    get:
+      summary: List or download user certificates
+      tags: [Certificates]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Real binary PDF certificate or list of earned certificates
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /leaderboard/{courseId}:
+    get:
+      summary: Course leaderboard rankings (Cached TTL 60 sec)
+      tags: [Gamification]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: courseId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Top student rankings with points and streaks
+
+  # ==========================================
+  # ADMIN & BACKGROUND JOBS
+  # ==========================================
+  /admin/jobs/status:
+    get:
+      summary: Live BullMQ background queue metrics (Admin)
+      tags: [Admin]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Queue job counts across streak, ingestion, and notification queues
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  queues:
+                    type: object
+                    properties:
+                      streak: { $ref: '#/components/schemas/QueueStatus' }
+                      ingestion: { $ref: '#/components/schemas/QueueStatus' }
+                      notification: { $ref: '#/components/schemas/QueueStatus' }
+
+  /admin/jobs/streaks/run:
+    post:
+      summary: Trigger manual streak evaluation job via BullMQ (Admin)
+      tags: [Admin]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Streak maintenance dispatched to BullMQ

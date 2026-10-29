@@ -20,7 +20,6 @@ pool.on('error', (err) => {
 export const redis = new Redis({
   host: config.redis.host,
   port: config.redis.port,
-  lazyConnect: true,
   retryStrategy: (times) => {
     return Math.min(times * 100, 3000);
   },

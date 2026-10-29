@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { pool } from '../../config/db';
 import { authenticateToken, AuthenticatedRequest } from '../../middleware/auth';
 import { generateCertificatePdf } from '../../utils/certificate';
+import { cacheMiddleware } from '../../utils/cache';
 
 export const gamificationRouter = Router();
 
@@ -47,8 +48,8 @@ gamificationRouter.get(['/users/me/streak', '/me/streak', '/streak'], authentica
   }
 });
 
-// GET /leaderboard/:courseId
-gamificationRouter.get(['/leaderboard/:courseId', '/:courseId'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+// GET /leaderboard/:courseId (Cached TTL 60 sec)
+gamificationRouter.get(['/leaderboard/:courseId', '/:courseId'], authenticateToken, cacheMiddleware(60, 'cache:leaderboard'), async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { courseId } = req.params;
 

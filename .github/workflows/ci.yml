@@ -1,0 +1,143 @@
+name: LMS-AI Continuous Integration & Verification
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  frontend-build:
+    name: Frontend Lint & Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Frontend Dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: TypeScript Build & Vite Packaging
+        working-directory: ./frontend
+        run: npm run build
+
+  backend-test:
+    name: Backend Build & Jest Integration Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: lms_admin
+          POSTGRES_PASSWORD: lms_dev_password
+          POSTGRES_DB: lms_ai_db
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install Backend Dependencies
+        working-directory: ./backend
+        run: npm ci
+
+      - name: Backend TypeScript Compilation
+        working-directory: ./backend
+        run: npm run build
+
+      - name: Run Database Migrations & Seeds
+        working-directory: ./backend
+        env:
+          NODE_ENV: test
+          DB_HOST: localhost
+          DB_PORT: 5433
+          DB_USER: lms_admin
+          DB_PASSWORD: lms_dev_password
+          DB_NAME: lms_ai_db
+          REDIS_HOST: localhost
+          REDIS_PORT: 6380
+        run: |
+          npm run migrate
+          npm run seed
+
+      - name: Run Jest Test Suites
+        working-directory: ./backend
+        env:
+          NODE_ENV: test
+          DB_HOST: localhost
+          DB_PORT: 5433
+          DB_USER: lms_admin
+          DB_PASSWORD: lms_dev_password
+          DB_NAME: lms_ai_db
+          REDIS_HOST: localhost
+          REDIS_PORT: 6380
+        run: npm run test
+
+  ai-service-test:
+    name: AI Service Pytest Suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install AI Service Dependencies
+        working-directory: ./ai-service
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Execute Pytest Suite
+        working-directory: ./ai-service
+        env:
+          PYTHONPATH: .
+        run: pytest -v -p no:cacheprovider tests/
+
+  docker-compose-validation:
+    name: Docker Compose Build Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Validate Compose Specification
+        run: docker compose config
+
+      - name: Build All Container Images
+        run: docker compose build
