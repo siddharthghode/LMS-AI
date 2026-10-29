@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { api } from '../../services/api';
 import {
   ShieldCheck,
@@ -10,15 +11,28 @@ import {
   AlertTriangle,
   History,
   TrendingUp,
-  Sparkles
+  Sparkles,
+  Flag,
+  Trash2,
+  Check
 } from 'lucide-react';
 
 export const AdminPanel: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'approvals' | 'users' | 'audit'>('overview');
+  const location = useLocation();
+  const initialTab = location.pathname.includes('/admin/moderation')
+    ? 'moderation'
+    : location.pathname.includes('/admin/approvals')
+    ? 'approvals'
+    : location.pathname.includes('/admin/users')
+    ? 'users'
+    : 'overview';
+
+  const [activeTab, setActiveTab] = useState<'overview' | 'approvals' | 'users' | 'moderation' | 'audit'>(initialTab);
   const [metrics, setMetrics] = useState<any>(null);
   const [pendingCourses, setPendingCourses] = useState<any[]>([]);
   const [usersList, setUsersList] = useState<any[]>([]);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [flaggedPosts, setFlaggedPosts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   // Modal for approval feedback
@@ -33,15 +47,36 @@ export const AdminPanel: React.FC = () => {
       api.get('/admin/courses/pending'),
       api.get('/admin/users'),
       api.get('/admin/audit-logs'),
+      api.get('/admin/moderation/flagged-posts'),
     ])
-      .then(([overviewRes, pendingRes, usersRes, auditRes]) => {
+      .then(([overviewRes, pendingRes, usersRes, auditRes, flaggedRes]) => {
         setMetrics(overviewRes.data);
         setPendingCourses(pendingRes.data);
         setUsersList(usersRes.data);
         setAuditLogs(auditRes.data);
+        setFlaggedPosts(flaggedRes.data);
       })
       .catch(err => console.error('Admin panel load failed:', err))
       .finally(() => setIsLoading(false));
+  };
+
+  const handleDismissFlag = async (postId: string) => {
+    try {
+      await api.put(`/admin/moderation/posts/${postId}/dismiss`);
+      setFlaggedPosts(prev => prev.filter(p => p.id !== postId));
+    } catch (err) {
+      console.error('Failed to dismiss flag:', err);
+    }
+  };
+
+  const handleDeleteFlaggedPost = async (postId: string) => {
+    if (!confirm('Are you sure you want to permanently delete this reported post?')) return;
+    try {
+      await api.delete(`/admin/moderation/posts/${postId}`);
+      setFlaggedPosts(prev => prev.filter(p => p.id !== postId));
+    } catch (err) {
+      console.error('Failed to delete flagged post:', err);
+    }
   };
 
   useEffect(() => {
@@ -100,6 +135,7 @@ export const AdminPanel: React.FC = () => {
             { id: 'overview', label: 'Platform Stats' },
             { id: 'approvals', label: `Pending Approvals (${pendingCourses.length})` },
             { id: 'users', label: 'User Directory' },
+            { id: 'moderation', label: `Moderation (${flaggedPosts.length})` },
             { id: 'audit', label: 'Audit Trail' },
           ].map(tab => (
             <button
@@ -342,6 +378,82 @@ export const AdminPanel: React.FC = () => {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* Moderation Tab */}
+      {activeTab === 'moderation' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+            <div>
+              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <Flag className="w-5 h-5 text-amber-400" />
+                Community Content Moderation Queue
+              </h2>
+              <p className="text-xs text-slate-400">
+                Review flagged discussion posts reported by learners or instructors. Dismiss false flags or purge violating content.
+              </p>
+            </div>
+            <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+              {flaggedPosts.length} Pending {flaggedPosts.length === 1 ? 'Review' : 'Reviews'}
+            </span>
+          </div>
+
+          {flaggedPosts.length === 0 ? (
+            <div className="p-16 text-center rounded-3xl bg-slate-800/20 border border-slate-800">
+              <CheckCircle className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
+              <h3 className="text-base font-semibold text-white mb-1">Queue is clear</h3>
+              <p className="text-xs text-slate-400">There are no flagged comments or reported discussions requiring moderation.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {flaggedPosts.map(post => (
+                <div
+                  key={post.id}
+                  className="p-5 rounded-2xl bg-slate-800/40 border border-amber-500/20 space-y-3"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                          Reported Content
+                        </span>
+                        <span className="text-xs font-bold text-white">Course: {post.course_title || 'Enrolled Course'}</span>
+                        <span className="text-slate-600">•</span>
+                        <span className="text-xs text-slate-400">Topic: <strong>{post.thread_title}</strong></span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 flex items-center gap-2">
+                        <span>Author: <strong className="text-slate-300">{post.author_name}</strong> ({post.author_email})</span>
+                        <span>•</span>
+                        <span>Reported at {new Date(post.created_at).toLocaleString()}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => handleDismissFlag(post.id)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors"
+                      >
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        Dismiss Flag
+                      </button>
+                      <button
+                        onClick={() => handleDeleteFlaggedPost(post.id)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-600/20 hover:bg-red-600 text-red-300 hover:text-white text-xs font-bold border border-red-500/30 transition-all"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Delete Post
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-200 leading-relaxed font-mono">
+                    "{post.content}"
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

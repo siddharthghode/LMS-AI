@@ -169,15 +169,53 @@ adminRouter.get('/moderation/flagged-posts', async (req: AuthenticatedRequest, r
   try {
     const flaggedRes = await pool.query(
       `SELECT p.*, u.full_name as author_name, u.email as author_email,
-              t.title as thread_title, t.course_id
+              t.title as thread_title, t.course_id,
+              c.title as course_title
        FROM discussion_posts p
        JOIN users u ON p.user_id = u.id
        JOIN discussion_threads t ON p.thread_id = t.id
+       LEFT JOIN courses c ON t.course_id = c.id
        WHERE p.is_flagged = TRUE
        ORDER BY p.created_at DESC`
     );
 
     res.json(flaggedRes.rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /admin/moderation/posts/:id/dismiss - Dismiss flag
+adminRouter.put('/moderation/posts/:id/dismiss', async (req: AuthenticatedRequest, res: Response, next) => {
+  try {
+    const { id } = req.params;
+    await pool.query(`UPDATE discussion_posts SET is_flagged = FALSE WHERE id = $1`, [id]);
+
+    await pool.query(
+      `INSERT INTO audit_logs (actor_id, action, entity, entity_id, metadata)
+       VALUES ($1, 'FLAG_DISMISSED', 'discussion_post', $2, '{}'::JSONB)`,
+      [req.user!.id, id]
+    );
+
+    res.json({ message: 'Flag dismissed successfully' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /admin/moderation/posts/:id - Remove offending post
+adminRouter.delete('/moderation/posts/:id', async (req: AuthenticatedRequest, res: Response, next) => {
+  try {
+    const { id } = req.params;
+    await pool.query(`DELETE FROM discussion_posts WHERE id = $1`, [id]);
+
+    await pool.query(
+      `INSERT INTO audit_logs (actor_id, action, entity, entity_id, metadata)
+       VALUES ($1, 'POST_DELETED_BY_ADMIN', 'discussion_post', $2, '{}'::JSONB)`,
+      [req.user!.id, id]
+    );
+
+    res.json({ message: 'Post removed successfully' });
   } catch (err) {
     next(err);
   }

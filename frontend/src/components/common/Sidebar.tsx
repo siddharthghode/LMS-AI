@@ -11,7 +11,8 @@ import {
   FileCheck,
   PlusCircle,
   ShieldCheck,
-  ClipboardList
+  ClipboardList,
+  Flag
 } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
@@ -39,6 +40,7 @@ export const Sidebar: React.FC = () => {
     { to: '/admin', label: 'Admin Overview', icon: ShieldCheck },
     { to: '/admin/approvals', label: 'Course Approvals', icon: ClipboardList },
     { to: '/admin/users', label: 'User Directory', icon: GraduationCap },
+    { to: '/admin/moderation', label: 'Content Moderation', icon: Flag },
     { to: '/catalog', label: 'Course Catalog', icon: Compass },
   ];
 

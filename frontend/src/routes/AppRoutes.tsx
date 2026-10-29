@@ -192,6 +192,14 @@ export const AppRoutes: React.FC = () => {
           </ProtectedRoute>
         }
       />
+      <Route
+        path="/admin/moderation"
+        element={
+          <ProtectedRoute allowedRoles={['admin']}>
+            <AdminPanel />
+          </ProtectedRoute>
+        }
+      />
 
       {/* Fallback */}
       <Route path="*" element={<Navigate to="/" replace />} />

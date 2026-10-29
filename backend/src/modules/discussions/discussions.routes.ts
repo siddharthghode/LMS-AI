@@ -5,7 +5,7 @@ import { authenticateToken, AuthenticatedRequest } from '../../middleware/auth';
 export const discussionsRouter = Router();
 
 // GET /courses/:id/discussions - List threads
-discussionsRouter.get('/courses/:id/discussions', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+discussionsRouter.get(['/courses/:id/discussions', '/:id/discussions'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id: courseId } = req.params;
 
@@ -27,7 +27,7 @@ discussionsRouter.get('/courses/:id/discussions', authenticateToken, async (req:
 });
 
 // POST /courses/:id/discussions - Create thread
-discussionsRouter.post('/courses/:id/discussions', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+discussionsRouter.post(['/courses/:id/discussions', '/:id/discussions'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id: courseId } = req.params;
     const { title, content } = req.body;
@@ -67,7 +67,7 @@ discussionsRouter.post('/courses/:id/discussions', authenticateToken, async (req
 });
 
 // GET /discussions/:id/posts - List posts for thread
-discussionsRouter.get('/discussions/:id/posts', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+discussionsRouter.get(['/discussions/:id/posts', '/:id/posts'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id: threadId } = req.params;
 
@@ -90,7 +90,7 @@ discussionsRouter.get('/discussions/:id/posts', authenticateToken, async (req: A
 });
 
 // POST /discussions/:id/posts - Add reply post
-discussionsRouter.post('/discussions/:id/posts', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+discussionsRouter.post(['/discussions/:id/posts', '/:id/posts'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id: threadId } = req.params;
     const { content } = req.body;
@@ -109,7 +109,7 @@ discussionsRouter.post('/discussions/:id/posts', authenticateToken, async (req: 
 });
 
 // PUT /posts/:id/flag - Flag inappropriate post
-discussionsRouter.put('/posts/:id/flag', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+discussionsRouter.put(['/posts/:id/flag', '/:id/flag'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id } = req.params;
     await pool.query(`UPDATE discussion_posts SET is_flagged = TRUE WHERE id = $1`, [id]);
@@ -119,8 +119,38 @@ discussionsRouter.put('/posts/:id/flag', authenticateToken, async (req: Authenti
   }
 });
 
+// PUT /posts/:id/unflag - Dismiss flag
+discussionsRouter.put(['/posts/:id/unflag', '/:id/unflag', '/posts/:id/dismiss-flag', '/:id/dismiss-flag'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+  try {
+    const { id } = req.params;
+    await pool.query(`UPDATE discussion_posts SET is_flagged = FALSE WHERE id = $1`, [id]);
+    res.json({ message: 'Flag dismissed successfully' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /posts/:id - Delete post
+discussionsRouter.delete(['/posts/:id', '/:id'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user!.id;
+    const role = req.user!.role;
+
+    if (['instructor', 'admin'].includes(role)) {
+      await pool.query(`DELETE FROM discussion_posts WHERE id = $1`, [id]);
+    } else {
+      await pool.query(`DELETE FROM discussion_posts WHERE id = $1 AND user_id = $2`, [id, userId]);
+    }
+
+    res.json({ message: 'Post deleted successfully' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /courses/:id/announcements
-discussionsRouter.get('/courses/:id/announcements', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+discussionsRouter.get(['/courses/:id/announcements', '/:id/announcements'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id: courseId } = req.params;
 
@@ -140,7 +170,7 @@ discussionsRouter.get('/courses/:id/announcements', authenticateToken, async (re
 });
 
 // POST /courses/:id/announcements
-discussionsRouter.post('/courses/:id/announcements', authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
+discussionsRouter.post(['/courses/:id/announcements', '/:id/announcements'], authenticateToken, async (req: AuthenticatedRequest, res: Response, next) => {
   try {
     const { id: courseId } = req.params;
     const { content } = req.body;
